@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
-  ShoppingCart, Home, Car, Music2, Stethoscope, ShoppingBag, Repeat,
+  ShoppingCart, Home, Car, Music2, Stethoscope, Repeat,
   MoreHorizontal, Plus, Trash2, ChevronLeft, ChevronRight, TrendingUp,
-  TrendingDown, PiggyBank, Pencil, Check, Landmark, Briefcase, LineChart,
-  Wallet, Target, ArrowUpRight, ArrowDownRight, LayoutGrid, BarChart3,
-  KeyRound, Copy,
+  TrendingDown, PiggyBank, Pencil, Check, Landmark, Wallet, Target,
+  LayoutGrid, BarChart3, KeyRound, Copy, Receipt, X,
 } from "lucide-react";
 import {
   BarChart as ReBarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -13,25 +12,35 @@ import {
 import { storage, getSyncKey, setSyncKey } from "./storage";
 
 const CATEGORIES = [
-  { key: "alimentation", label: "Alimentation", color: "#4F7859", icon: ShoppingCart, defaultBudget: 350 },
-  { key: "logement", label: "Logement", color: "#1F3A3E", icon: Home, defaultBudget: 600 },
-  { key: "transport", label: "Transport", color: "#B8901F", icon: Car, defaultBudget: 150 },
-  { key: "loisirs", label: "Loisirs", color: "#C05A3D", icon: Music2, defaultBudget: 120 },
-  { key: "sante", label: "Santé", color: "#8A5A44", icon: Stethoscope, defaultBudget: 60 },
-  { key: "shopping", label: "Shopping", color: "#6B4D6B", icon: ShoppingBag, defaultBudget: 100 },
-  { key: "abonnements", label: "Abonnements", color: "#4A6670", icon: Repeat, defaultBudget: 50 },
-  { key: "autres", label: "Autres", color: "#7E7E74", icon: MoreHorizontal, defaultBudget: 70 },
+  { key: "alimentation", label: "Alimentation", color: "#4F7859", icon: ShoppingCart, defaultBudget: 350,
+    subcategories: ["Courses", "Fast Food", "Autre Alimentation"] },
+  { key: "logement", label: "Logement", color: "#1F3A3E", icon: Home, defaultBudget: 600,
+    subcategories: ["Loyer", "Travaux", "Autres"] },
+  { key: "transport", label: "Transport", color: "#B8901F", icon: Car, defaultBudget: 150,
+    subcategories: ["Essence", "Assurance Auto", "Crédit Voiture", "Autre Transport"] },
+  { key: "loisirs", label: "Loisirs", color: "#C05A3D", icon: Music2, defaultBudget: 120,
+    subcategories: ["Bar", "Sport", "Shopping", "Voyage", "Plaisirs divers"] },
+  { key: "sante", label: "Santé", color: "#8A5A44", icon: Stethoscope, defaultBudget: 60,
+    subcategories: [] },
+  { key: "ndf", label: "NDF", color: "#6B4D6B", icon: Receipt, defaultBudget: 100,
+    subcategories: ["Logement", "Repas", "Autoroute"] },
+  { key: "abonnements", label: "Abonnements", color: "#4A6670", icon: Repeat, defaultBudget: 50,
+    subcategories: [] },
+  { key: "autres", label: "Autres", color: "#7E7E74", icon: MoreHorizontal, defaultBudget: 70,
+    subcategories: [] },
 ];
 const CAT_MAP = Object.fromEntries(CATEGORIES.map((c) => [c.key, c]));
 const DEFAULT_CAT_BUDGETS = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.defaultBudget]));
+const FALLBACK_CAT = { key: "autres", label: "Autres (ancienne catégorie)", color: "#7E7E74", icon: MoreHorizontal, subcategories: [] };
 
 const INCOME_CATEGORIES = [
-  { key: "salaire", label: "Salaire", color: "#4F7859", icon: Landmark },
-  { key: "freelance", label: "Freelance", color: "#1F3A3E", icon: Briefcase },
-  { key: "investissement", label: "Investissement", color: "#B8901F", icon: LineChart },
-  { key: "autre_revenu", label: "Autre revenu", color: "#6B4D6B", icon: Wallet },
+  { key: "salaires", label: "Salaires", color: "#4F7859", icon: Landmark },
+  { key: "variable", label: "Variable", color: "#1F3A3E", icon: TrendingUp },
+  { key: "ndf", label: "NDF", color: "#B8901F", icon: Receipt },
+  { key: "autres", label: "Autres", color: "#6B4D6B", icon: Wallet },
 ];
 const INC_MAP = Object.fromEntries(INCOME_CATEGORIES.map((c) => [c.key, c]));
+const FALLBACK_INC = { key: "autres", label: "Autres (ancienne catégorie)", color: "#6B4D6B", icon: Wallet };
 
 const fmt = (n) =>
   new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(
@@ -47,6 +56,10 @@ const dayLabel = (isoDate) => {
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const uid = () => Math.random().toString(36).slice(2, 10);
 const round2 = (n) => Math.round(n * 100) / 100;
+const firstSubcat = (catKey) => {
+  const def = CAT_MAP[catKey];
+  return def && def.subcategories && def.subcategories.length ? def.subcategories[0] : "";
+};
 
 export default function ExpenseTracker() {
   const [expenses, setExpenses] = useState([]);
@@ -64,8 +77,10 @@ export default function ExpenseTracker() {
   const [desc, setDesc] = useState("");
   const [amount, setAmount] = useState("");
   const [cat, setCat] = useState("alimentation");
-  const [incCat, setIncCat] = useState("salaire");
+  const [subcat, setSubcat] = useState(firstSubcat("alimentation"));
+  const [incCat, setIncCat] = useState("salaires");
   const [date, setDate] = useState(todayISO());
+  const [editingEntry, setEditingEntry] = useState(null); // { id, type } | null
 
   const [syncKey] = useState(() => getSyncKey());
   const [editingKey, setEditingKey] = useState(false);
@@ -227,21 +242,72 @@ export default function ExpenseTracker() {
 
   const goMonth = (d) => setCurrent(new Date(current.getFullYear(), current.getMonth() + d, 1));
 
-  const addEntry = (e) => {
+  const handleCatChange = (newCat) => {
+    setCat(newCat);
+    setSubcat(firstSubcat(newCat));
+  };
+
+  const resetForm = () => {
+    setDesc("");
+    setAmount("");
+    setDate(todayISO());
+    setCat("alimentation");
+    setSubcat(firstSubcat("alimentation"));
+    setIncCat("salaires");
+  };
+
+  const startEditEntry = (e) => {
+    setEntryType(e.type);
+    setDesc(e.description);
+    setAmount(String(e.amount).replace(".", ","));
+    setDate(e.date);
+    if (e.type === "expense") {
+      setCat(e.category);
+      setSubcat(e.subcategory || firstSubcat(e.category));
+    } else {
+      setIncCat(e.category);
+    }
+    setEditingEntry({ id: e.id, type: e.type });
+  };
+
+  const cancelEdit = () => {
+    setEditingEntry(null);
+    resetForm();
+  };
+
+  const handleSubmit = (e) => {
     e.preventDefault();
     const num = parseFloat(String(amount).replace(",", "."));
     if (!desc.trim() || !Number.isFinite(num) || num <= 0) return;
+
+    if (editingEntry) {
+      if (editingEntry.type === "expense") {
+        setExpenses((prev) => prev.map((x) => x.id === editingEntry.id
+          ? { ...x, description: desc.trim(), amount: round2(num), category: cat, subcategory: subcat, date }
+          : x));
+      } else {
+        setIncomes((prev) => prev.map((x) => x.id === editingEntry.id
+          ? { ...x, description: desc.trim(), amount: round2(num), category: incCat, date }
+          : x));
+      }
+      setEditingEntry(null);
+      resetForm();
+      return;
+    }
+
     if (entryType === "expense") {
-      setExpenses((prev) => [...prev, { id: uid(), description: desc.trim(), amount: round2(num), category: cat, date }]);
+      setExpenses((prev) => [...prev, { id: uid(), description: desc.trim(), amount: round2(num), category: cat, subcategory: subcat, date }]);
     } else {
       setIncomes((prev) => [...prev, { id: uid(), description: desc.trim(), amount: round2(num), category: incCat, date }]);
     }
     setDesc("");
     setAmount("");
   };
+
   const removeEntry = (id, type) => {
     if (type === "expense") setExpenses((prev) => prev.filter((e) => e.id !== id));
     else setIncomes((prev) => prev.filter((e) => e.id !== id));
+    if (editingEntry && editingEntry.id === id) cancelEdit();
   };
 
   const saveGoal = () => {
@@ -258,6 +324,8 @@ export default function ExpenseTracker() {
     if (Number.isFinite(num) && num >= 0) setCatBudgets((prev) => ({ ...prev, [key]: round2(num) }));
     setEditingCat(null);
   };
+
+  const hasSubcats = CAT_MAP[cat] && CAT_MAP[cat].subcategories.length > 0;
 
   return (
     <div className="min-h-screen w-full" style={{ background: "var(--paper)", color: "var(--ink)", fontFamily: "var(--font-body)" }}>
@@ -276,6 +344,7 @@ export default function ExpenseTracker() {
           font-family: var(--font-body); border:1px solid var(--line); border-radius:8px; padding:8px 10px; background:#fff; color:var(--ink); width:100%; font-size:14px;
         }
         input:focus, select:focus { outline:none; border-color:var(--petrol); box-shadow:0 0 0 3px rgba(31,58,62,0.12); }
+        input:disabled, select:disabled, button:disabled { opacity:0.5; cursor:not-allowed; }
         ::-webkit-scrollbar { width:8px; height:8px; }
         ::-webkit-scrollbar-thumb { background:var(--line); border-radius:8px; }
       `}</style>
@@ -411,27 +480,41 @@ export default function ExpenseTracker() {
               </div>
 
               <div className="md:col-span-2 rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
-                <h2 className="fx-display text-lg font-medium mb-3">Nouvelle écriture</h2>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="fx-display text-lg font-medium">{editingEntry ? "Modifier l'écriture" : "Nouvelle écriture"}</h2>
+                  {editingEntry && (
+                    <button onClick={cancelEdit} aria-label="Annuler la modification" className="opacity-60 hover:opacity-100">
+                      <X size={16} />
+                    </button>
+                  )}
+                </div>
                 <div className="flex gap-1 mb-3 rounded-lg" style={{ background: "rgba(0,0,0,0.04)", padding: "3px" }}>
-                  <button onClick={() => setEntryType("expense")} className="flex-1 text-sm py-1.5 rounded-md font-medium"
+                  <button type="button" disabled={!!editingEntry} onClick={() => setEntryType("expense")} className="flex-1 text-sm py-1.5 rounded-md font-medium"
                     style={{ background: entryType === "expense" ? "var(--card)" : "transparent", color: entryType === "expense" ? "var(--coral)" : "var(--ink)", opacity: entryType === "expense" ? 1 : 0.6, boxShadow: entryType === "expense" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
                     Dépense
                   </button>
-                  <button onClick={() => setEntryType("income")} className="flex-1 text-sm py-1.5 rounded-md font-medium"
+                  <button type="button" disabled={!!editingEntry} onClick={() => setEntryType("income")} className="flex-1 text-sm py-1.5 rounded-md font-medium"
                     style={{ background: entryType === "income" ? "var(--card)" : "transparent", color: entryType === "income" ? "var(--sage)" : "var(--ink)", opacity: entryType === "income" ? 1 : 0.6, boxShadow: entryType === "income" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
                     Revenu
                   </button>
                 </div>
-                <form onSubmit={addEntry} className="flex flex-col gap-2.5">
+                <form onSubmit={handleSubmit} className="flex flex-col gap-2.5">
                   <input type="text" placeholder={entryType === "expense" ? "Description (ex. Courses Monoprix)" : "Description (ex. Salaire août)"} value={desc} onChange={(e) => setDesc(e.target.value)} />
                   <div className="flex gap-2">
                     <input type="number" step="0.01" min="0" placeholder="Montant" value={amount} onChange={(e) => setAmount(e.target.value)} style={{ width: "45%" }} />
                     <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ width: "55%" }} />
                   </div>
                   {entryType === "expense" ? (
-                    <select value={cat} onChange={(e) => setCat(e.target.value)}>
-                      {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-                    </select>
+                    <>
+                      <select value={cat} onChange={(e) => handleCatChange(e.target.value)}>
+                        {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+                      </select>
+                      {hasSubcats && (
+                        <select value={subcat} onChange={(e) => setSubcat(e.target.value)}>
+                          {CAT_MAP[cat].subcategories.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      )}
+                    </>
                   ) : (
                     <select value={incCat} onChange={(e) => setIncCat(e.target.value)}>
                       {INCOME_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
@@ -439,7 +522,7 @@ export default function ExpenseTracker() {
                   )}
                   <button type="submit" className="flex items-center justify-center gap-1.5 rounded-lg py-2.5 mt-1 text-sm font-medium"
                     style={{ background: entryType === "expense" ? "var(--petrol)" : "var(--sage)", color: "#fff" }}>
-                    <Plus size={16} /> Ajouter
+                    {editingEntry ? <Check size={16} /> : <Plus size={16} />} {editingEntry ? "Enregistrer" : "Ajouter"}
                   </button>
                 </form>
               </div>
@@ -461,18 +544,27 @@ export default function ExpenseTracker() {
                       <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--sage)", letterSpacing: "0.08em" }}>{dayLabel(d)}</p>
                       <div className="flex flex-col gap-1.5">
                         {items.map((e) => {
-                          const c = e.type === "expense" ? CAT_MAP[e.category] : INC_MAP[e.category];
+                          const c = (e.type === "expense" ? CAT_MAP[e.category] : INC_MAP[e.category])
+                            || (e.type === "expense" ? FALLBACK_CAT : FALLBACK_INC);
                           const Icon = c.icon;
+                          const isEditingThis = editingEntry && editingEntry.id === e.id;
                           return (
-                            <div key={e.id} className="ledger-row group py-1.5">
+                            <div key={e.id} className="ledger-row group py-1.5" style={isEditingThis ? { background: "rgba(31,58,62,0.05)", borderRadius: "6px" } : undefined}>
                               <span className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ background: c.color }}>
                                 <Icon size={12} color="#fff" />
                               </span>
-                              <span className="text-sm shrink-0 max-w-[42%] truncate">{e.description}</span>
+                              <span className="text-sm shrink-0 max-w-[38%] truncate">
+                                {e.description}
+                                {e.subcategory ? <span style={{ opacity: 0.5 }}> · {e.subcategory}</span> : null}
+                              </span>
                               <span className="dots" />
                               <span className="fx-mono text-sm shrink-0" style={{ color: e.type === "income" ? "var(--sage)" : "var(--ink)" }}>
                                 {e.type === "income" ? "+" : "-"}{fmt(e.amount)}
                               </span>
+                              <button onClick={() => startEditEntry(e)} aria-label="Modifier"
+                                className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
+                                <Pencil size={13} style={{ color: "var(--petrol)" }} />
+                              </button>
                               <button onClick={() => removeEntry(e.id, e.type)} aria-label="Supprimer"
                                 className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
                                 <Trash2 size={14} style={{ color: "var(--coral)" }} />
