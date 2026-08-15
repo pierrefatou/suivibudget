@@ -69,6 +69,7 @@ export default function ExpenseTracker() {
   const [incomes, setIncomes] = useState([]);
   const [catBudgets, setCatBudgets] = useState(DEFAULT_CAT_BUDGETS);
   const [savingsGoal, setSavingsGoal] = useState(300);
+  const [ndfReimbursements, setNdfReimbursements] = useState({}); // { "2026-07": "450", ... }
   const [loaded, setLoaded] = useState(false);
   const [current, setCurrent] = useState(() => {
     const d = new Date();
@@ -155,6 +156,7 @@ export default function ExpenseTracker() {
             setSavingsGoal(s.savingsGoal);
             setGoalDraft(String(s.savingsGoal));
           }
+          if (s.ndfReimbursements) setNdfReimbursements(s.ndfReimbursements);
         }
       } catch (e) {}
       setLoaded(true);
@@ -169,14 +171,14 @@ export default function ExpenseTracker() {
       try {
         await storage.set("expenses", JSON.stringify(expenses));
         await storage.set("incomes", JSON.stringify(incomes));
-        await storage.set("settings", JSON.stringify({ catBudgets, savingsGoal }));
+        await storage.set("settings", JSON.stringify({ catBudgets, savingsGoal, ndfReimbursements }));
         setSaveState("saved");
       } catch (e) {
         setSaveState("error");
       }
     }, 400);
     return () => clearTimeout(saveTimer.current);
-  }, [expenses, incomes, catBudgets, savingsGoal, loaded]);
+  }, [expenses, incomes, catBudgets, savingsGoal, ndfReimbursements, loaded]);
 
   const currentKey = monthKey(current);
   const monthExpenses = useMemo(
@@ -263,6 +265,23 @@ export default function ExpenseTracker() {
     })),
     [catTotals]
   );
+
+  // --- Simulateur coûts voiture & déplacements pro (mois en cours) ---
+  const carSim = useMemo(() => {
+    const sum = (catKey, sub) =>
+      monthExpenses.filter((e) => e.category === catKey && e.subcategory === sub).reduce((s, e) => s + e.amount, 0);
+    return {
+      credit: sum("transport", "Crédit Voiture"),
+      assurance: sum("transport", "Assurance Auto"),
+      essence: sum("transport", "Essence"),
+      autoroute: sum("ndf", "Autoroute"),
+      hotel: sum("ndf", "Logement"),
+      repas: sum("ndf", "Repas"),
+    };
+  }, [monthExpenses]);
+  const carSimTotal = carSim.credit + carSim.assurance + carSim.essence + carSim.autoroute + carSim.hotel + carSim.repas;
+  const ndfReimbursedAmount = parseFloat(String(ndfReimbursements[currentKey] || "0").replace(",", ".")) || 0;
+  const carSimDelta = round2(ndfReimbursedAmount - carSimTotal);
 
   // --- Répartition des revenus du mois en cours ---
   const incomeTotals = useMemo(() => {
@@ -809,6 +828,54 @@ export default function ExpenseTracker() {
                   <p className="fx-mono text-xl font-medium" style={{ color: s.color }}>{s.value}</p>
                 </div>
               ))}
+            </div>
+
+            {/* Simulateur coûts voiture & déplacements pro */}
+            <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
+              <h2 className="fx-display text-lg font-medium mb-1">Simulateur voiture & déplacements pro</h2>
+              <p className="text-xs mb-4" style={{ opacity: 0.55 }}>Mois en cours — coûts réels calculés depuis tes transactions, à comparer au remboursement NDF</p>
+
+              <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--coral)", letterSpacing: "0.08em" }}>Sorties</p>
+              <div className="flex flex-col gap-1.5 mb-4">
+                {[
+                  { label: "Crédit voiture", value: carSim.credit },
+                  { label: "Assurance voiture", value: carSim.assurance },
+                  { label: "Essence", value: carSim.essence },
+                  { label: "Autoroute", value: carSim.autoroute },
+                  { label: "Hôtel", value: carSim.hotel },
+                  { label: "Repas NDF", value: carSim.repas },
+                ].map((l) => (
+                  <div key={l.label} className="ledger-row text-sm">
+                    <span className="shrink-0">{l.label}</span>
+                    <span className="dots" />
+                    <span className="fx-mono shrink-0">{fmt(l.value)}</span>
+                  </div>
+                ))}
+                <div className="ledger-row text-sm pt-2 mt-1" style={{ borderTop: "1px solid var(--line)" }}>
+                  <span className="shrink-0 font-medium">Total sorties</span>
+                  <span className="dots" />
+                  <span className="fx-mono shrink-0 font-medium">{fmt(carSimTotal)}</span>
+                </div>
+              </div>
+
+              <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--sage)", letterSpacing: "0.08em" }}>Entrée</p>
+              <div className="ledger-row text-sm mb-4">
+                <span className="shrink-0">Montant remboursé NDF</span>
+                <span className="text-xs shrink-0" style={{ opacity: 0.45 }}>(saisie manuelle)</span>
+                <span className="dots" />
+                <input type="number" step="0.01" min="0" placeholder="0"
+                  value={ndfReimbursements[currentKey] ?? ""}
+                  onChange={(e) => setNdfReimbursements((prev) => ({ ...prev, [currentKey]: e.target.value }))}
+                  style={{ width: "100px" }} className="fx-mono text-right" />
+              </div>
+
+              <div className="rounded-lg px-4 py-3 flex items-center justify-between"
+                style={{ background: carSimDelta >= 0 ? "rgba(79,120,89,0.1)" : "rgba(192,90,61,0.1)" }}>
+                <span className="text-sm font-medium">Delta (entrée − sorties)</span>
+                <span className="fx-mono text-lg font-medium" style={{ color: carSimDelta >= 0 ? "var(--sage)" : "var(--coral)" }}>
+                  {carSimDelta >= 0 ? "+" : ""}{fmt(carSimDelta)}
+                </span>
+              </div>
             </div>
 
             {/* Détail du mois en cours */}
