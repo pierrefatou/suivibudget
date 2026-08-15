@@ -3,7 +3,7 @@ import {
   ShoppingCart, Home, Car, Music2, Stethoscope, Repeat,
   MoreHorizontal, Plus, Trash2, ChevronLeft, ChevronRight, TrendingUp,
   TrendingDown, PiggyBank, Pencil, Check, Landmark, Wallet, Target,
-  LayoutGrid, BarChart3, KeyRound, Copy, Receipt, X,
+  LayoutGrid, BarChart3, KeyRound, Copy, Receipt, X, ChevronDown,
 } from "lucide-react";
 import {
   BarChart as ReBarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -105,6 +105,8 @@ export default function ExpenseTracker() {
   const [goalDraft, setGoalDraft] = useState(String(savingsGoal));
   const [editingCat, setEditingCat] = useState(null);
   const [catDraft, setCatDraft] = useState("");
+  const [expandedCat, setExpandedCat] = useState(null);
+  const [expandedIncomeCat, setExpandedIncomeCat] = useState(null);
   const [saveState, setSaveState] = useState("idle");
   const saveTimer = useRef(null);
 
@@ -507,36 +509,73 @@ export default function ExpenseTracker() {
 
             <div className="grid md:grid-cols-5 gap-6 mb-6">
               <div className="md:col-span-3 rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
-                <h2 className="fx-display text-lg font-medium mb-4">Budgets par catégorie</h2>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="fx-display text-lg font-medium">Budgets par catégorie</h2>
+                  <span className="text-xs" style={{ opacity: 0.45 }}>Clique une catégorie pour voir le détail</span>
+                </div>
                 <div className="flex flex-col gap-2">
                   {catTotals.map(({ key, value, budget }) => {
                     const c = CAT_MAP[key];
                     const Icon = c.icon;
                     const pct = budget > 0 ? Math.min((value / budget) * 100, 100) : 0;
                     const over = budget > 0 && value > budget;
+                    const isOpen = expandedCat === key;
+                    const catTx = isOpen
+                      ? [...monthExpenses].filter((e) => e.category === key).sort((a, b) => (a.date < b.date ? 1 : -1))
+                      : [];
                     return (
-                      <div key={key} className="cat-track">
-                        <div className="cat-fill" style={{ width: `${pct}%`, background: over ? "var(--coral)" : c.color }} />
-                        <div className="relative h-full flex items-center px-3 gap-2.5 ledger-row">
-                          <span className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ background: c.color }}>
-                            <Icon size={13} color="#fff" />
-                          </span>
-                          <span className="text-sm font-medium shrink-0">{c.label}</span>
-                          <span className="dots" />
-                          <span className="fx-mono text-sm shrink-0" style={{ color: over ? "var(--coral)" : "var(--ink)" }}>{fmt(value)}</span>
-                          <span className="text-xs shrink-0 opacity-50">/</span>
-                          {editingCat === key ? (
-                            <div className="flex items-center gap-1 shrink-0">
-                              <input type="number" autoFocus value={catDraft} onChange={(e) => setCatDraft(e.target.value)}
-                                onKeyDown={(e) => e.key === "Enter" && saveCatBudget(key)}
-                                onBlur={() => saveCatBudget(key)} style={{ width: "70px" }} className="fx-mono text-right" />
-                            </div>
-                          ) : (
-                            <button onClick={() => startEditCat(key)} className="flex items-center gap-1 shrink-0 fx-mono text-sm opacity-70 hover:opacity-100">
-                              {fmt(budget)} <Pencil size={10} />
-                            </button>
-                          )}
+                      <div key={key}>
+                        <div className="cat-track" style={{ cursor: "pointer" }} onClick={() => setExpandedCat(isOpen ? null : key)}>
+                          <div className="cat-fill" style={{ width: `${pct}%`, background: over ? "var(--coral)" : c.color }} />
+                          <div className="relative h-full flex items-center px-3 gap-2.5 ledger-row">
+                            <span className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ background: c.color }}>
+                              <Icon size={13} color="#fff" />
+                            </span>
+                            <span className="text-sm font-medium shrink-0">{c.label}</span>
+                            <span className="dots" />
+                            <span className="fx-mono text-sm shrink-0" style={{ color: over ? "var(--coral)" : "var(--ink)" }}>{fmt(value)}</span>
+                            <span className="text-xs shrink-0 opacity-50">/</span>
+                            {editingCat === key ? (
+                              <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                                <input type="number" autoFocus value={catDraft} onChange={(e) => setCatDraft(e.target.value)}
+                                  onKeyDown={(e) => e.key === "Enter" && saveCatBudget(key)}
+                                  onBlur={() => saveCatBudget(key)} style={{ width: "70px" }} className="fx-mono text-right" />
+                              </div>
+                            ) : (
+                              <button onClick={(e) => { e.stopPropagation(); startEditCat(key); }} className="flex items-center gap-1 shrink-0 fx-mono text-sm opacity-70 hover:opacity-100">
+                                {fmt(budget)} <Pencil size={10} />
+                              </button>
+                            )}
+                            <ChevronDown size={14} className="shrink-0" style={{ opacity: 0.4, transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+                          </div>
                         </div>
+                        {isOpen && (
+                          <div className="flex flex-col gap-1 py-2 pl-4" style={{ borderLeft: `2px solid ${c.color}`, marginLeft: "12px" }}>
+                            {catTx.length === 0 ? (
+                              <p className="text-xs py-1" style={{ opacity: 0.5 }}>Aucune transaction dans cette catégorie ce mois-ci.</p>
+                            ) : (
+                              catTx.map((e) => (
+                                <div key={e.id} className="ledger-row group text-sm py-1">
+                                  <span className="fx-mono shrink-0 text-xs" style={{ opacity: 0.5, width: "32px" }}>{e.date.slice(8, 10)}/{e.date.slice(5, 7)}</span>
+                                  <span className="shrink-0 max-w-[38%] truncate">
+                                    {e.description}
+                                    {e.subcategory ? <span style={{ opacity: 0.5 }}> · {e.subcategory}</span> : null}
+                                  </span>
+                                  <span className="dots" />
+                                  <span className="fx-mono text-sm shrink-0">{fmt(e.amount)}</span>
+                                  <button onClick={() => startEditEntry({ ...e, type: "expense" })} aria-label="Modifier"
+                                    className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
+                                    <Pencil size={12} style={{ color: "var(--petrol)" }} />
+                                  </button>
+                                  <button onClick={() => removeEntry(e.id, "expense")} aria-label="Supprimer"
+                                    className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
+                                    <Trash2 size={12} style={{ color: "var(--coral)" }} />
+                                  </button>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -788,18 +827,49 @@ export default function ExpenseTracker() {
                 <div className="flex flex-col gap-2">
                   {incomeTotals.map((c) => {
                     const Icon = c.icon;
+                    const isOpen = expandedIncomeCat === c.key;
+                    const incTx = isOpen
+                      ? [...monthIncomes].filter((e) => e.category === c.key).sort((a, b) => (a.date < b.date ? 1 : -1))
+                      : [];
                     return (
-                      <div key={c.key} className="cat-track">
-                        <div className="cat-fill" style={{ width: `${c.pct}%`, background: c.color }} />
-                        <div className="relative h-full flex items-center px-3 gap-2.5 ledger-row">
-                          <span className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ background: c.color }}>
-                            <Icon size={13} color="#fff" />
-                          </span>
-                          <span className="text-sm font-medium shrink-0">{c.label}</span>
-                          <span className="dots" />
-                          <span className="fx-mono text-sm shrink-0">{fmt(c.value)}</span>
-                          <span className="text-xs shrink-0 opacity-50 w-9 text-right">{Math.round(c.pct)}%</span>
+                      <div key={c.key}>
+                        <div className="cat-track" style={{ cursor: "pointer" }} onClick={() => setExpandedIncomeCat(isOpen ? null : c.key)}>
+                          <div className="cat-fill" style={{ width: `${c.pct}%`, background: c.color }} />
+                          <div className="relative h-full flex items-center px-3 gap-2.5 ledger-row">
+                            <span className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ background: c.color }}>
+                              <Icon size={13} color="#fff" />
+                            </span>
+                            <span className="text-sm font-medium shrink-0">{c.label}</span>
+                            <span className="dots" />
+                            <span className="fx-mono text-sm shrink-0">{fmt(c.value)}</span>
+                            <span className="text-xs shrink-0 opacity-50 w-9 text-right">{Math.round(c.pct)}%</span>
+                            <ChevronDown size={14} className="shrink-0" style={{ opacity: 0.4, transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+                          </div>
                         </div>
+                        {isOpen && (
+                          <div className="flex flex-col gap-1 py-2 pl-4" style={{ borderLeft: `2px solid ${c.color}`, marginLeft: "12px" }}>
+                            {incTx.length === 0 ? (
+                              <p className="text-xs py-1" style={{ opacity: 0.5 }}>Aucun revenu dans cette catégorie ce mois-ci.</p>
+                            ) : (
+                              incTx.map((e) => (
+                                <div key={e.id} className="ledger-row group text-sm py-1">
+                                  <span className="fx-mono shrink-0 text-xs" style={{ opacity: 0.5, width: "32px" }}>{e.date.slice(8, 10)}/{e.date.slice(5, 7)}</span>
+                                  <span className="shrink-0 max-w-[45%] truncate">{e.description}</span>
+                                  <span className="dots" />
+                                  <span className="fx-mono text-sm shrink-0">{fmt(e.amount)}</span>
+                                  <button onClick={() => startEditEntry({ ...e, type: "income" })} aria-label="Modifier"
+                                    className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
+                                    <Pencil size={12} style={{ color: "var(--petrol)" }} />
+                                  </button>
+                                  <button onClick={() => removeEntry(e.id, "income")} aria-label="Supprimer"
+                                    className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
+                                    <Trash2 size={12} style={{ color: "var(--coral)" }} />
+                                  </button>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
