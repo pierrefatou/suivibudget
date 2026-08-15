@@ -82,6 +82,7 @@ export default function ExpenseTracker() {
   const [incCat, setIncCat] = useState("salaires");
   const [date, setDate] = useState(todayISO());
   const [editingEntry, setEditingEntry] = useState(null); // { id, type } | null
+  const [editDraft, setEditDraft] = useState({ description: "", amount: "", date: "", category: "", subcategory: "" });
 
   const [syncKey] = useState(() => getSyncKey());
   const [editingKey, setEditingKey] = useState(false);
@@ -313,54 +314,10 @@ export default function ExpenseTracker() {
     setSubcat(firstSubcat(newCat));
   };
 
-  const resetForm = () => {
-    setDesc("");
-    setAmount("");
-    setDate(todayISO());
-    setCat("alimentation");
-    setSubcat(firstSubcat("alimentation"));
-    setIncCat("salaires");
-  };
-
-  const startEditEntry = (e) => {
-    setEntryType(e.type);
-    setDesc(e.description);
-    setAmount(String(e.amount).replace(".", ","));
-    setDate(e.date);
-    if (e.type === "expense") {
-      setCat(e.category);
-      setSubcat(e.subcategory || firstSubcat(e.category));
-    } else {
-      setIncCat(e.category);
-    }
-    setEditingEntry({ id: e.id, type: e.type });
-  };
-
-  const cancelEdit = () => {
-    setEditingEntry(null);
-    resetForm();
-  };
-
-  const handleSubmit = (e) => {
+  const addEntry = (e) => {
     e.preventDefault();
     const num = parseFloat(String(amount).replace(",", "."));
     if (!desc.trim() || !Number.isFinite(num) || num <= 0) return;
-
-    if (editingEntry) {
-      if (editingEntry.type === "expense") {
-        setExpenses((prev) => prev.map((x) => x.id === editingEntry.id
-          ? { ...x, description: desc.trim(), amount: round2(num), category: cat, subcategory: subcat, date }
-          : x));
-      } else {
-        setIncomes((prev) => prev.map((x) => x.id === editingEntry.id
-          ? { ...x, description: desc.trim(), amount: round2(num), category: incCat, date }
-          : x));
-      }
-      setEditingEntry(null);
-      resetForm();
-      return;
-    }
-
     if (entryType === "expense") {
       setExpenses((prev) => [...prev, { id: uid(), description: desc.trim(), amount: round2(num), category: cat, subcategory: subcat, date }]);
     } else {
@@ -370,10 +327,113 @@ export default function ExpenseTracker() {
     setAmount("");
   };
 
+  // --- Édition inline (directement sur la ligne cliquée, pas dans le formulaire du haut) ---
+  const startEditEntry = (e, type) => {
+    setEditingEntry({ id: e.id, type });
+    setEditDraft({
+      description: e.description,
+      amount: String(e.amount).replace(".", ","),
+      date: e.date,
+      category: e.category,
+      subcategory: type === "expense" ? (e.subcategory || firstSubcat(e.category)) : "",
+    });
+  };
+
+  const cancelEdit = () => setEditingEntry(null);
+
+  const saveInlineEdit = () => {
+    const num = parseFloat(String(editDraft.amount).replace(",", "."));
+    if (!editDraft.description.trim() || !Number.isFinite(num) || num <= 0 || !editDraft.date) return;
+    const { id, type } = editingEntry;
+    if (type === "expense") {
+      setExpenses((prev) => prev.map((x) => x.id === id
+        ? { ...x, description: editDraft.description.trim(), amount: round2(num), category: editDraft.category, subcategory: editDraft.subcategory, date: editDraft.date }
+        : x));
+    } else {
+      setIncomes((prev) => prev.map((x) => x.id === id
+        ? { ...x, description: editDraft.description.trim(), amount: round2(num), category: editDraft.category, date: editDraft.date }
+        : x));
+    }
+    setEditingEntry(null);
+  };
+
   const removeEntry = (id, type) => {
     if (type === "expense") setExpenses((prev) => prev.filter((e) => e.id !== id));
     else setIncomes((prev) => prev.filter((e) => e.id !== id));
     if (editingEntry && editingEntry.id === id) cancelEdit();
+  };
+
+  // Rendu d'une ligne de transaction : édition inline si c'est la ligne en cours d'édition, sinon ligne normale.
+  const renderTxRow = (e, type) => {
+    const isEditing = editingEntry && editingEntry.id === e.id && editingEntry.type === type;
+    if (isEditing) {
+      const catDef = type === "expense" ? CAT_MAP[editDraft.category] : null;
+      const showSub = type === "expense" && catDef && catDef.subcategories.length > 0;
+      return (
+        <div key={e.id} className="flex flex-col gap-2 p-3 rounded-lg my-1" style={{ background: "rgba(31,58,62,0.05)", border: "1px solid var(--line)" }}>
+          <input type="text" autoFocus value={editDraft.description}
+            onChange={(ev) => setEditDraft((d) => ({ ...d, description: ev.target.value }))} placeholder="Description" />
+          <div className="flex gap-2">
+            <input type="number" step="0.01" min="0" value={editDraft.amount}
+              onChange={(ev) => setEditDraft((d) => ({ ...d, amount: ev.target.value }))} style={{ width: "42%" }} />
+            <input type="date" value={editDraft.date}
+              onChange={(ev) => setEditDraft((d) => ({ ...d, date: ev.target.value }))} style={{ width: "38%" }} />
+          </div>
+          {type === "expense" ? (
+            <div className="flex gap-2">
+              <select value={editDraft.category} onChange={(ev) => {
+                const newCat = ev.target.value;
+                setEditDraft((d) => ({ ...d, category: newCat, subcategory: firstSubcat(newCat) }));
+              }}>
+                {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+              </select>
+              {showSub && (
+                <select value={editDraft.subcategory} onChange={(ev) => setEditDraft((d) => ({ ...d, subcategory: ev.target.value }))}>
+                  {catDef.subcategories.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              )}
+            </div>
+          ) : (
+            <select value={editDraft.category} onChange={(ev) => setEditDraft((d) => ({ ...d, category: ev.target.value }))}>
+              {INCOME_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+          )}
+          <div className="flex gap-2 mt-1">
+            <button onClick={saveInlineEdit} className="flex-1 flex items-center justify-center gap-1.5 rounded-md py-1.5 text-sm font-medium" style={{ background: "var(--petrol)", color: "#fff" }}>
+              <Check size={14} /> Enregistrer
+            </button>
+            <button onClick={cancelEdit} aria-label="Annuler" className="px-3 rounded-md" style={{ background: "rgba(0,0,0,0.06)" }}>
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      );
+    }
+    const c = (type === "expense" ? CAT_MAP[e.category] : INC_MAP[e.category]) || (type === "expense" ? FALLBACK_CAT : FALLBACK_INC);
+    const Icon = c.icon;
+    return (
+      <div key={e.id} className="ledger-row group py-1.5">
+        <span className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ background: c.color }}>
+          <Icon size={12} color="#fff" />
+        </span>
+        <span className="text-sm shrink-0 max-w-[38%] truncate">
+          {e.description}
+          {e.subcategory ? <span style={{ opacity: 0.5 }}> · {e.subcategory}</span> : null}
+        </span>
+        <span className="dots" />
+        <span className="fx-mono text-sm shrink-0" style={{ color: type === "income" ? "var(--sage)" : "var(--ink)" }}>
+          {type === "income" ? "+" : "-"}{fmt(e.amount)}
+        </span>
+        <button onClick={() => startEditEntry(e, type)} aria-label="Modifier"
+          className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
+          <Pencil size={13} style={{ color: "var(--petrol)" }} />
+        </button>
+        <button onClick={() => removeEntry(e.id, type)} aria-label="Supprimer"
+          className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
+          <Trash2 size={14} style={{ color: "var(--coral)" }} />
+        </button>
+      </div>
+    );
   };
 
   const saveGoal = () => {
@@ -554,25 +614,7 @@ export default function ExpenseTracker() {
                             {catTx.length === 0 ? (
                               <p className="text-xs py-1" style={{ opacity: 0.5 }}>Aucune transaction dans cette catégorie ce mois-ci.</p>
                             ) : (
-                              catTx.map((e) => (
-                                <div key={e.id} className="ledger-row group text-sm py-1">
-                                  <span className="fx-mono shrink-0 text-xs" style={{ opacity: 0.5, width: "32px" }}>{e.date.slice(8, 10)}/{e.date.slice(5, 7)}</span>
-                                  <span className="shrink-0 max-w-[38%] truncate">
-                                    {e.description}
-                                    {e.subcategory ? <span style={{ opacity: 0.5 }}> · {e.subcategory}</span> : null}
-                                  </span>
-                                  <span className="dots" />
-                                  <span className="fx-mono text-sm shrink-0">{fmt(e.amount)}</span>
-                                  <button onClick={() => startEditEntry({ ...e, type: "expense" })} aria-label="Modifier"
-                                    className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
-                                    <Pencil size={12} style={{ color: "var(--petrol)" }} />
-                                  </button>
-                                  <button onClick={() => removeEntry(e.id, "expense")} aria-label="Supprimer"
-                                    className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
-                                    <Trash2 size={12} style={{ color: "var(--coral)" }} />
-                                  </button>
-                                </div>
-                              ))
+                              catTx.map((e) => renderTxRow(e, "expense"))
                             )}
                           </div>
                         )}
@@ -583,25 +625,18 @@ export default function ExpenseTracker() {
               </div>
 
               <div className="md:col-span-2 rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="fx-display text-lg font-medium">{editingEntry ? "Modifier l'écriture" : "Nouvelle écriture"}</h2>
-                  {editingEntry && (
-                    <button onClick={cancelEdit} aria-label="Annuler la modification" className="opacity-60 hover:opacity-100">
-                      <X size={16} />
-                    </button>
-                  )}
-                </div>
+                <h2 className="fx-display text-lg font-medium mb-3">Nouvelle écriture</h2>
                 <div className="flex gap-1 mb-3 rounded-lg" style={{ background: "rgba(0,0,0,0.04)", padding: "3px" }}>
-                  <button type="button" disabled={!!editingEntry} onClick={() => setEntryType("expense")} className="flex-1 text-sm py-1.5 rounded-md font-medium"
+                  <button type="button" onClick={() => setEntryType("expense")} className="flex-1 text-sm py-1.5 rounded-md font-medium"
                     style={{ background: entryType === "expense" ? "var(--card)" : "transparent", color: entryType === "expense" ? "var(--coral)" : "var(--ink)", opacity: entryType === "expense" ? 1 : 0.6, boxShadow: entryType === "expense" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
                     Dépense
                   </button>
-                  <button type="button" disabled={!!editingEntry} onClick={() => setEntryType("income")} className="flex-1 text-sm py-1.5 rounded-md font-medium"
+                  <button type="button" onClick={() => setEntryType("income")} className="flex-1 text-sm py-1.5 rounded-md font-medium"
                     style={{ background: entryType === "income" ? "var(--card)" : "transparent", color: entryType === "income" ? "var(--sage)" : "var(--ink)", opacity: entryType === "income" ? 1 : 0.6, boxShadow: entryType === "income" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
                     Revenu
                   </button>
                 </div>
-                <form onSubmit={handleSubmit} className="flex flex-col gap-2.5">
+                <form onSubmit={addEntry} className="flex flex-col gap-2.5">
                   <input type="text" placeholder={entryType === "expense" ? "Description (ex. Courses Monoprix)" : "Description (ex. Salaire août)"} value={desc} onChange={(e) => setDesc(e.target.value)} />
                   <div className="flex gap-2">
                     <input type="number" step="0.01" min="0" placeholder="Montant" value={amount} onChange={(e) => setAmount(e.target.value)} style={{ width: "45%" }} />
@@ -625,7 +660,7 @@ export default function ExpenseTracker() {
                   )}
                   <button type="submit" className="flex items-center justify-center gap-1.5 rounded-lg py-2.5 mt-1 text-sm font-medium"
                     style={{ background: entryType === "expense" ? "var(--petrol)" : "var(--sage)", color: "#fff" }}>
-                    {editingEntry ? <Check size={16} /> : <Plus size={16} />} {editingEntry ? "Enregistrer" : "Ajouter"}
+                    <Plus size={16} /> Ajouter
                   </button>
                 </form>
               </div>
@@ -646,35 +681,7 @@ export default function ExpenseTracker() {
                     <div key={d}>
                       <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--sage)", letterSpacing: "0.08em" }}>{dayLabel(d)}</p>
                       <div className="flex flex-col gap-1.5">
-                        {items.map((e) => {
-                          const c = (e.type === "expense" ? CAT_MAP[e.category] : INC_MAP[e.category])
-                            || (e.type === "expense" ? FALLBACK_CAT : FALLBACK_INC);
-                          const Icon = c.icon;
-                          const isEditingThis = editingEntry && editingEntry.id === e.id;
-                          return (
-                            <div key={e.id} className="ledger-row group py-1.5" style={isEditingThis ? { background: "rgba(31,58,62,0.05)", borderRadius: "6px" } : undefined}>
-                              <span className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ background: c.color }}>
-                                <Icon size={12} color="#fff" />
-                              </span>
-                              <span className="text-sm shrink-0 max-w-[38%] truncate">
-                                {e.description}
-                                {e.subcategory ? <span style={{ opacity: 0.5 }}> · {e.subcategory}</span> : null}
-                              </span>
-                              <span className="dots" />
-                              <span className="fx-mono text-sm shrink-0" style={{ color: e.type === "income" ? "var(--sage)" : "var(--ink)" }}>
-                                {e.type === "income" ? "+" : "-"}{fmt(e.amount)}
-                              </span>
-                              <button onClick={() => startEditEntry(e)} aria-label="Modifier"
-                                className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
-                                <Pencil size={13} style={{ color: "var(--petrol)" }} />
-                              </button>
-                              <button onClick={() => removeEntry(e.id, e.type)} aria-label="Supprimer"
-                                className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
-                                <Trash2 size={14} style={{ color: "var(--coral)" }} />
-                              </button>
-                            </div>
-                          );
-                        })}
+                        {items.map((e) => renderTxRow(e, e.type))}
                       </div>
                     </div>
                   ))}
@@ -851,22 +858,7 @@ export default function ExpenseTracker() {
                             {incTx.length === 0 ? (
                               <p className="text-xs py-1" style={{ opacity: 0.5 }}>Aucun revenu dans cette catégorie ce mois-ci.</p>
                             ) : (
-                              incTx.map((e) => (
-                                <div key={e.id} className="ledger-row group text-sm py-1">
-                                  <span className="fx-mono shrink-0 text-xs" style={{ opacity: 0.5, width: "32px" }}>{e.date.slice(8, 10)}/{e.date.slice(5, 7)}</span>
-                                  <span className="shrink-0 max-w-[45%] truncate">{e.description}</span>
-                                  <span className="dots" />
-                                  <span className="fx-mono text-sm shrink-0">{fmt(e.amount)}</span>
-                                  <button onClick={() => startEditEntry({ ...e, type: "income" })} aria-label="Modifier"
-                                    className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
-                                    <Pencil size={12} style={{ color: "var(--petrol)" }} />
-                                  </button>
-                                  <button onClick={() => removeEntry(e.id, "income")} aria-label="Supprimer"
-                                    className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
-                                    <Trash2 size={12} style={{ color: "var(--coral)" }} />
-                                  </button>
-                                </div>
-                              ))
+                              incTx.map((e) => renderTxRow(e, "income"))
                             )}
                           </div>
                         )}
