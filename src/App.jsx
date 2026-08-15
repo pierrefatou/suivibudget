@@ -3,7 +3,7 @@ import {
   ShoppingCart, Home, Car, Music2, Stethoscope, Repeat,
   MoreHorizontal, Plus, Trash2, ChevronLeft, ChevronRight, TrendingUp,
   TrendingDown, PiggyBank, Pencil, Check, Landmark, Wallet, Target,
-  LayoutGrid, BarChart3, KeyRound, Copy, Receipt, X, ChevronDown,
+  LayoutGrid, BarChart3, KeyRound, Copy, Receipt, X, ChevronDown, Plane,
 } from "lucide-react";
 import {
   BarChart as ReBarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -20,7 +20,9 @@ const CATEGORIES = [
   { key: "transport", label: "Transport", color: "#B8901F", icon: Car, defaultBudget: 150,
     subcategories: ["Essence", "Assurance Auto", "Crédit Voiture", "Autre Transport"] },
   { key: "loisirs", label: "Loisirs", color: "#C05A3D", icon: Music2, defaultBudget: 120,
-    subcategories: ["Bar", "Sport", "Shopping", "Voyage", "Plaisirs divers"] },
+    subcategories: ["Bar", "Sport", "Shopping", "Plaisirs divers"] },
+  { key: "voyage", label: "Voyage", color: "#3D6B8A", icon: Plane, defaultBudget: 100,
+    subcategories: [] },
   { key: "sante", label: "Santé", color: "#8A5A44", icon: Stethoscope, defaultBudget: 60,
     subcategories: [] },
   { key: "ndf", label: "NDF", color: "#6B4D6B", icon: Receipt, defaultBudget: 100,
@@ -107,6 +109,7 @@ export default function ExpenseTracker() {
   const [editingCat, setEditingCat] = useState(null);
   const [catDraft, setCatDraft] = useState("");
   const [expandedCat, setExpandedCat] = useState(null);
+  const [expandedSubcat, setExpandedSubcat] = useState(null);
   const [expandedIncomeCat, setExpandedIncomeCat] = useState(null);
   const [saveState, setSaveState] = useState("idle");
   const saveTimer = useRef(null);
@@ -580,12 +583,31 @@ export default function ExpenseTracker() {
                     const pct = budget > 0 ? Math.min((value / budget) * 100, 100) : 0;
                     const over = budget > 0 && value > budget;
                     const isOpen = expandedCat === key;
-                    const catTx = isOpen
-                      ? [...monthExpenses].filter((e) => e.category === key).sort((a, b) => (a.date < b.date ? 1 : -1))
-                      : [];
+                    const hasSubs = c.subcategories.length > 0;
+
+                    // Regroupe les dépenses de la catégorie par sous-catégorie
+                    let subRows = [];
+                    let flatTx = [];
+                    if (isOpen) {
+                      const catTxAll = monthExpenses.filter((e) => e.category === key);
+                      if (hasSubs) {
+                        const map = {};
+                        catTxAll.forEach((e) => {
+                          const sub = e.subcategory || "Non précisé";
+                          if (!map[sub]) map[sub] = { sub, total: 0, items: [] };
+                          map[sub].total += e.amount;
+                          map[sub].items.push(e);
+                        });
+                        subRows = Object.values(map).sort((a, b) => b.total - a.total);
+                      } else {
+                        flatTx = [...catTxAll].sort((a, b) => (a.date < b.date ? 1 : -1));
+                      }
+                    }
+
                     return (
                       <div key={key}>
-                        <div className="cat-track" style={{ cursor: "pointer" }} onClick={() => setExpandedCat(isOpen ? null : key)}>
+                        <div className="cat-track" style={{ cursor: "pointer" }}
+                          onClick={() => { setExpandedCat(isOpen ? null : key); setExpandedSubcat(null); }}>
                           <div className="cat-fill" style={{ width: `${pct}%`, background: over ? "var(--coral)" : c.color }} />
                           <div className="relative h-full flex items-center px-3 gap-2.5 ledger-row">
                             <span className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ background: c.color }}>
@@ -609,12 +631,49 @@ export default function ExpenseTracker() {
                             <ChevronDown size={14} className="shrink-0" style={{ opacity: 0.4, transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
                           </div>
                         </div>
-                        {isOpen && (
+
+                        {isOpen && !hasSubs && (
                           <div className="flex flex-col gap-1 py-2 pl-4" style={{ borderLeft: `2px solid ${c.color}`, marginLeft: "12px" }}>
-                            {catTx.length === 0 ? (
+                            {flatTx.length === 0 ? (
                               <p className="text-xs py-1" style={{ opacity: 0.5 }}>Aucune transaction dans cette catégorie ce mois-ci.</p>
                             ) : (
-                              catTx.map((e) => renderTxRow(e, "expense"))
+                              flatTx.map((e) => renderTxRow(e, "expense"))
+                            )}
+                          </div>
+                        )}
+
+                        {isOpen && hasSubs && (
+                          <div className="flex flex-col gap-1.5 py-2 pl-4" style={{ borderLeft: `2px solid ${c.color}`, marginLeft: "12px" }}>
+                            {subRows.length === 0 ? (
+                              <p className="text-xs py-1" style={{ opacity: 0.5 }}>Aucune transaction dans cette catégorie ce mois-ci.</p>
+                            ) : (
+                              subRows.map(({ sub, total, items }) => {
+                                const subKey = `${key}::${sub}`;
+                                const subOpen = expandedSubcat === subKey;
+                                const subPct = value > 0 ? (total / value) * 100 : 0;
+                                return (
+                                  <div key={sub}>
+                                    <div className="cat-track" style={{ height: "30px", cursor: "pointer" }}
+                                      onClick={() => setExpandedSubcat(subOpen ? null : subKey)}>
+                                      <div className="cat-fill" style={{ width: `${subPct}%`, background: c.color, opacity: 0.28 }} />
+                                      <div className="relative h-full flex items-center px-3 gap-2 ledger-row">
+                                        <span className="text-sm shrink-0">{sub}</span>
+                                        <span className="dots" />
+                                        <span className="fx-mono text-xs shrink-0">{fmt(total)}</span>
+                                        <span className="text-xs shrink-0 opacity-45 w-8 text-right">{Math.round(subPct)}%</span>
+                                        <ChevronDown size={12} className="shrink-0" style={{ opacity: 0.4, transform: subOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+                                      </div>
+                                    </div>
+                                    {subOpen && (
+                                      <div className="flex flex-col gap-1 py-2 pl-4" style={{ borderLeft: `2px solid ${c.color}`, marginLeft: "10px", opacity: 0.92 }}>
+                                        {items
+                                          .sort((a, b) => (a.date < b.date ? 1 : -1))
+                                          .map((e) => renderTxRow(e, "expense"))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })
                             )}
                           </div>
                         )}
