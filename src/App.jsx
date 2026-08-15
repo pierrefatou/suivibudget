@@ -7,7 +7,8 @@ import {
 } from "lucide-react";
 import {
   BarChart as ReBarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  CartesianGrid, Legend, ReferenceLine, Cell,
+  CartesianGrid, Legend, ReferenceLine, Cell, PieChart, Pie, ComposedChart,
+  Line, AreaChart, Area,
 } from "recharts";
 import { storage, getSyncKey, setSyncKey } from "./storage";
 
@@ -226,6 +227,69 @@ export default function ExpenseTracker() {
     return CATEGORIES.map((c) => ({ key: c.key, avg: sums[c.key] / monthsRange.length, pct: total6 > 0 ? (sums[c.key] / total6) * 100 : 0 }))
       .sort((a, b) => b.avg - a.avg);
   }, [expenses, monthsRange]);
+
+  // --- Répartition par catégorie du mois en cours (donut) ---
+  const pieData = useMemo(
+    () => catTotals.filter((c) => c.value > 0).map((c) => ({
+      key: c.key, name: (CAT_MAP[c.key] || FALLBACK_CAT).label, value: c.value, color: (CAT_MAP[c.key] || FALLBACK_CAT).color,
+    })),
+    [catTotals]
+  );
+
+  // --- Détail par sous-catégorie du mois en cours ---
+  const subcatTotals = useMemo(() => {
+    const map = {};
+    monthExpenses.forEach((e) => {
+      const sub = e.subcategory || "Non précisé";
+      const k = `${e.category}__${sub}`;
+      map[k] = (map[k] || 0) + e.amount;
+    });
+    return Object.entries(map)
+      .map(([k, value]) => {
+        const [catKey, sub] = k.split("__");
+        const def = CAT_MAP[catKey] || FALLBACK_CAT;
+        return { catKey, catLabel: def.label, color: def.color, icon: def.icon, sub, value };
+      })
+      .sort((a, b) => b.value - a.value);
+  }, [monthExpenses]);
+
+  // --- Répartition des revenus du mois en cours ---
+  const incomeTotals = useMemo(() => {
+    const map = {};
+    monthIncomes.forEach((e) => { map[e.category] = (map[e.category] || 0) + e.amount; });
+    return INCOME_CATEGORIES.map((c) => ({
+      key: c.key, label: c.label, color: c.color, icon: c.icon,
+      value: map[c.key] || 0, pct: totalIncome > 0 ? ((map[c.key] || 0) / totalIncome) * 100 : 0,
+    })).sort((a, b) => b.value - a.value);
+  }, [monthIncomes, totalIncome]);
+
+  // --- Top 5 des plus grosses dépenses du mois ---
+  const topExpenses = useMemo(
+    () => [...monthExpenses].sort((a, b) => b.amount - a.amount).slice(0, 5),
+    [monthExpenses]
+  );
+  const txCount = monthExpenses.length;
+  const avgTx = txCount > 0 ? totalExpense / txCount : 0;
+  const maxTx = monthExpenses.reduce((m, e) => Math.max(m, e.amount), 0);
+
+  // --- Historique complet (tous les mois ayant au moins une écriture) pour les graphiques d'évolution ---
+  const allMonths = useMemo(() => {
+    const set = new Set([...expenses.map((e) => e.date.slice(0, 7)), ...incomes.map((e) => e.date.slice(0, 7))]);
+    return Array.from(set).sort();
+  }, [expenses, incomes]);
+
+  const allMonthsData = useMemo(() => {
+    let running = 0;
+    return allMonths.map((key) => {
+      const [y, m] = key.split("-");
+      const label = new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
+      const inc = round2(incomes.filter((e) => e.date.slice(0, 7) === key).reduce((s, e) => s + e.amount, 0));
+      const exp = round2(expenses.filter((e) => e.date.slice(0, 7) === key).reduce((s, e) => s + e.amount, 0));
+      const savings = round2(inc - exp);
+      running = round2(running + savings);
+      return { key, label, income: inc, expense: exp, savings, cumulative: running };
+    });
+  }, [expenses, incomes, allMonths]);
 
   const ledger = useMemo(() => {
     const items = [
@@ -597,6 +661,106 @@ export default function ExpenseTracker() {
               ))}
             </div>
 
+            {/* Détail du mois en cours */}
+            <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
+              <h2 className="fx-display text-lg font-medium mb-4">Ce mois-ci en détail</h2>
+              <div className="grid grid-cols-3 gap-3 mb-5">
+                <div>
+                  <p className="text-xs mb-1" style={{ opacity: 0.55 }}>Transactions</p>
+                  <p className="fx-mono text-lg font-medium">{txCount}</p>
+                </div>
+                <div>
+                  <p className="text-xs mb-1" style={{ opacity: 0.55 }}>Panier moyen</p>
+                  <p className="fx-mono text-lg font-medium">{fmt(avgTx)}</p>
+                </div>
+                <div>
+                  <p className="text-xs mb-1" style={{ opacity: 0.55 }}>Plus grosse dépense</p>
+                  <p className="fx-mono text-lg font-medium">{fmt(maxTx)}</p>
+                </div>
+              </div>
+              {topExpenses.length > 0 && (
+                <>
+                  <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--sage)", letterSpacing: "0.08em" }}>Top 5 des dépenses</p>
+                  <div className="flex flex-col gap-1.5">
+                    {topExpenses.map((e, i) => {
+                      const c = CAT_MAP[e.category] || FALLBACK_CAT;
+                      const Icon = c.icon;
+                      return (
+                        <div key={e.id} className="ledger-row text-sm py-1">
+                          <span className="fx-mono shrink-0 w-4 text-right" style={{ opacity: 0.4 }}>{i + 1}</span>
+                          <span className="w-5 h-5 rounded flex items-center justify-center shrink-0" style={{ background: c.color }}>
+                            <Icon size={11} color="#fff" />
+                          </span>
+                          <span className="shrink-0 max-w-[45%] truncate">{e.description}</span>
+                          <span className="dots" />
+                          <span className="fx-mono shrink-0">{fmt(e.amount)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Répartition par catégorie (donut, mois en cours) */}
+            <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
+              <h2 className="fx-display text-lg font-medium mb-1">Répartition des dépenses par catégorie</h2>
+              <p className="text-xs mb-4" style={{ opacity: 0.55 }}>Mois en cours</p>
+              {pieData.length === 0 ? (
+                <p className="text-sm py-6 text-center" style={{ opacity: 0.5 }}>Aucune dépense ce mois-ci.</p>
+              ) : (
+                <div className="flex flex-col md:flex-row items-center gap-6">
+                  <div style={{ width: 190, height: 190 }} className="shrink-0">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={88} paddingAngle={2}>
+                          {pieData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                        </Pie>
+                        <Tooltip formatter={(v) => fmt(v)} contentStyle={{ fontFamily: "IBM Plex Sans", fontSize: 12, borderRadius: 8, border: "1px solid var(--line)" }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="flex-1 flex flex-col gap-2 w-full">
+                    {pieData.map((d) => (
+                      <div key={d.key} className="ledger-row text-sm">
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.color }} />
+                        <span className="shrink-0">{d.name}</span>
+                        <span className="dots" />
+                        <span className="fx-mono shrink-0">{fmt(d.value)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Détail par sous-catégorie (mois en cours) */}
+            <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
+              <h2 className="fx-display text-lg font-medium mb-1">Détail par sous-catégorie</h2>
+              <p className="text-xs mb-4" style={{ opacity: 0.55 }}>Mois en cours</p>
+              {subcatTotals.length === 0 ? (
+                <p className="text-sm py-4 text-center" style={{ opacity: 0.5 }}>Aucune dépense ce mois-ci.</p>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  {subcatTotals.map((s, i) => {
+                    const Icon = s.icon;
+                    return (
+                      <div key={i} className="ledger-row text-sm py-1">
+                        <span className="w-5 h-5 rounded flex items-center justify-center shrink-0" style={{ background: s.color }}>
+                          <Icon size={11} color="#fff" />
+                        </span>
+                        <span className="shrink-0" style={{ opacity: 0.55 }}>{s.catLabel}</span>
+                        <span className="shrink-0" style={{ opacity: 0.3 }}>·</span>
+                        <span className="shrink-0 font-medium">{s.sub}</span>
+                        <span className="dots" />
+                        <span className="fx-mono shrink-0">{fmt(s.value)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
               <h2 className="fx-display text-lg font-medium mb-4">Revenus vs dépenses</h2>
               <div style={{ height: 220 }}>
@@ -614,34 +778,91 @@ export default function ExpenseTracker() {
               </div>
             </div>
 
+            {/* Répartition des revenus (mois en cours) */}
+            <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
+              <h2 className="fx-display text-lg font-medium mb-1">Répartition des revenus</h2>
+              <p className="text-xs mb-4" style={{ opacity: 0.55 }}>Mois en cours</p>
+              {totalIncome === 0 ? (
+                <p className="text-sm py-4 text-center" style={{ opacity: 0.5 }}>Aucun revenu ce mois-ci.</p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {incomeTotals.map((c) => {
+                    const Icon = c.icon;
+                    return (
+                      <div key={c.key} className="cat-track">
+                        <div className="cat-fill" style={{ width: `${c.pct}%`, background: c.color }} />
+                        <div className="relative h-full flex items-center px-3 gap-2.5 ledger-row">
+                          <span className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ background: c.color }}>
+                            <Icon size={13} color="#fff" />
+                          </span>
+                          <span className="text-sm font-medium shrink-0">{c.label}</span>
+                          <span className="dots" />
+                          <span className="fx-mono text-sm shrink-0">{fmt(c.value)}</span>
+                          <span className="text-xs shrink-0 opacity-50 w-9 text-right">{Math.round(c.pct)}%</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Évolution des dépenses mensuelles (historique complet) */}
+            <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
+              <h2 className="fx-display text-lg font-medium mb-1">Évolution des dépenses mensuelles</h2>
+              <p className="text-xs mb-4" style={{ opacity: 0.55 }}>Depuis votre première écriture</p>
+              {allMonthsData.length === 0 ? (
+                <p className="text-sm py-6 text-center" style={{ opacity: 0.5 }}>Pas encore assez de données.</p>
+              ) : (
+                <div style={{ height: 220 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={allMonthsData} margin={{ top: 4, right: 4, left: -14, bottom: 0 }}>
+                      <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
+                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--ink)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
+                      <YAxis tick={{ fontSize: 10, fill: "var(--ink)" }} axisLine={false} tickLine={false} width={40} />
+                      <Tooltip formatter={(v) => fmt(v)} contentStyle={{ fontFamily: "IBM Plex Sans", fontSize: 12, borderRadius: 8, border: "1px solid var(--line)" }} />
+                      <Area type="monotone" dataKey="expense" name="Dépenses" stroke="#C05A3D" fill="#C05A3D" fillOpacity={0.18} strokeWidth={2} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+
+            {/* Évolution de l'épargne (historique complet, barres + cumul) */}
             <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
               <h2 className="fx-display text-lg font-medium mb-1">Évolution de l'épargne</h2>
               <p className="text-xs mb-4" style={{ opacity: 0.55 }}>
-                Ligne pointillée = objectif mensuel de {fmt(savingsGoal)}
+                Barres = épargne du mois · ligne = épargne cumulée · pointillés = objectif de {fmt(savingsGoal)}
                 {bestMonth && worstMonth && bestMonth.key !== worstMonth.key && (
-                  <> · meilleur mois : {bestMonth.label} · plus faible : {worstMonth.label}</>
+                  <> · meilleur mois (6 derniers) : {bestMonth.label} · plus faible : {worstMonth.label}</>
                 )}
               </p>
-              <div style={{ height: 200 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <ReBarChart data={statsData} margin={{ top: 4, right: 4, left: -14, bottom: 0 }}>
-                    <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
-                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--ink)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
-                    <YAxis tick={{ fontSize: 10, fill: "var(--ink)" }} axisLine={false} tickLine={false} width={40} />
-                    <Tooltip formatter={(v) => fmt(v)} contentStyle={{ fontFamily: "IBM Plex Sans", fontSize: 12, borderRadius: 8, border: "1px solid var(--line)" }} />
-                    <ReferenceLine y={savingsGoal} stroke="#B8901F" strokeDasharray="4 4" />
-                    <Bar dataKey="savings" name="Épargne" radius={[4, 4, 0, 0]}>
-                      {statsData.map((d, i) => (
-                        <Cell key={i} fill={d.savings >= 0 ? "#4F7859" : "#C05A3D"} />
-                      ))}
-                    </Bar>
-                  </ReBarChart>
-                </ResponsiveContainer>
-              </div>
+              {allMonthsData.length === 0 ? (
+                <p className="text-sm py-6 text-center" style={{ opacity: 0.5 }}>Pas encore assez de données.</p>
+              ) : (
+                <div style={{ height: 240 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={allMonthsData} margin={{ top: 4, right: 4, left: -14, bottom: 0 }}>
+                      <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
+                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--ink)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
+                      <YAxis tick={{ fontSize: 10, fill: "var(--ink)" }} axisLine={false} tickLine={false} width={40} />
+                      <Tooltip formatter={(v) => fmt(v)} contentStyle={{ fontFamily: "IBM Plex Sans", fontSize: 12, borderRadius: 8, border: "1px solid var(--line)" }} />
+                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                      <ReferenceLine y={savingsGoal} stroke="#B8901F" strokeDasharray="4 4" />
+                      <Bar dataKey="savings" name="Épargne du mois" radius={[4, 4, 0, 0]}>
+                        {allMonthsData.map((d, i) => (
+                          <Cell key={i} fill={d.savings >= 0 ? "#4F7859" : "#C05A3D"} />
+                        ))}
+                      </Bar>
+                      <Line type="monotone" dataKey="cumulative" name="Épargne cumulée" stroke="#1F3A3E" strokeWidth={2} dot={{ r: 3 }} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </div>
 
             <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
-              <h2 className="fx-display text-lg font-medium mb-1">Répartition des dépenses par catégorie</h2>
+              <h2 className="fx-display text-lg font-medium mb-1">Moyenne par catégorie</h2>
               <p className="text-xs mb-4" style={{ opacity: 0.55 }}>Moyenne mensuelle sur les 6 derniers mois</p>
               <div className="flex flex-col gap-2">
                 {catAverages.map(({ key, avg, pct }) => {
