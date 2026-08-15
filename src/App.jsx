@@ -90,6 +90,9 @@ export default function ExpenseTracker() {
   const [editingKey, setEditingKey] = useState(false);
   const [keyDraft, setKeyDraft] = useState("");
   const [copied, setCopied] = useState(false);
+  const [renamingKey, setRenamingKey] = useState(false);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameStatus, setRenameStatus] = useState("idle"); // idle | saving | error
 
   const copyKey = async () => {
     try {
@@ -102,6 +105,23 @@ export default function ExpenseTracker() {
     if (!keyDraft.trim()) return;
     setSyncKey(keyDraft);
     window.location.reload();
+  };
+  const applyRename = async () => {
+    const newKey = renameDraft.trim().replace(/\s+/g, "-");
+    if (!newKey) return;
+    setRenameStatus("saving");
+    try {
+      const expRes = await storage.get("expenses");
+      const incRes = await storage.get("incomes");
+      const setRes = await storage.get("settings");
+      setSyncKey(newKey);
+      if (expRes && expRes.value) await storage.set("expenses", expRes.value);
+      if (incRes && incRes.value) await storage.set("incomes", incRes.value);
+      if (setRes && setRes.value) await storage.set("settings", setRes.value);
+      window.location.reload();
+    } catch (e) {
+      setRenameStatus("error");
+    }
   };
 
   const [editingGoal, setEditingGoal] = useState(false);
@@ -497,16 +517,44 @@ export default function ExpenseTracker() {
           <button onClick={copyKey} className="flex items-center gap-1 opacity-70 hover:opacity-100">
             <Copy size={13} /> {copied ? "Copié" : "Copier"}
           </button>
-          {!editingKey ? (
-            <button onClick={() => { setKeyDraft(""); setEditingKey(true); }} className="ml-auto opacity-70 hover:opacity-100 underline">
-              Utiliser une autre clé
-            </button>
-          ) : (
+          {!editingKey && !renamingKey && (
+            <div className="ml-auto flex items-center gap-3">
+              <button onClick={() => { setRenameDraft(""); setRenameStatus("idle"); setRenamingKey(true); }} className="opacity-70 hover:opacity-100 underline">
+                Personnaliser
+              </button>
+              <button onClick={() => { setKeyDraft(""); setEditingKey(true); }} className="opacity-70 hover:opacity-100 underline">
+                Utiliser une autre clé
+              </button>
+            </div>
+          )}
+          {editingKey && (
             <div className="flex items-center gap-1.5 ml-auto">
-              <input type="text" placeholder="Coller une clé" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} style={{ width: "220px" }} />
+              <input type="text" placeholder="Coller une clé" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} style={{ width: "200px" }} />
               <button onClick={applyKey} aria-label="Charger cette clé" className="p-1.5 rounded-md" style={{ background: "var(--petrol)", color: "#fff" }}>
                 <Check size={13} />
               </button>
+              <button onClick={() => setEditingKey(false)} aria-label="Annuler" className="p-1.5 rounded-md" style={{ background: "rgba(0,0,0,0.06)" }}>
+                <X size={13} />
+              </button>
+            </div>
+          )}
+          {renamingKey && (
+            <div className="flex items-center gap-1.5 ml-auto">
+              {renameStatus === "saving" ? (
+                <span className="text-xs" style={{ opacity: 0.6 }}>Personnalisation en cours…</span>
+              ) : (
+                <>
+                  <input type="text" placeholder="ex. pierre-budget" value={renameDraft}
+                    onChange={(e) => setRenameDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && applyRename()} style={{ width: "160px" }} />
+                  <button onClick={applyRename} aria-label="Valider le nouveau nom" className="p-1.5 rounded-md" style={{ background: "var(--petrol)", color: "#fff" }}>
+                    <Check size={13} />
+                  </button>
+                  <button onClick={() => setRenamingKey(false)} aria-label="Annuler" className="p-1.5 rounded-md" style={{ background: "rgba(0,0,0,0.06)" }}>
+                    <X size={13} />
+                  </button>
+                  {renameStatus === "error" && <span className="text-xs" style={{ color: "var(--coral)" }}>Erreur, réessaie</span>}
+                </>
+              )}
             </div>
           )}
         </div>
