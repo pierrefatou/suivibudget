@@ -37,7 +37,7 @@ const DEFAULT_CAT_BUDGETS = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.d
 const FALLBACK_CAT = { key: "autres", label: "Autres (ancienne catégorie)", color: "#7E7E74", icon: MoreHorizontal, subcategories: [] };
 
 const INCOME_CATEGORIES = [
-  { key: "salaires", label: "Salaires", color: "#4F7859", icon: Landmark },
+  { key: "salaires", label: "Fixe", color: "#4F7859", icon: Landmark },
   { key: "variable", label: "Variable", color: "#1F3A3E", icon: TrendingUp },
   { key: "ndf", label: "NDF", color: "#B8901F", icon: Receipt },
   { key: "autres", label: "Autres", color: "#6B4D6B", icon: Wallet },
@@ -110,6 +110,8 @@ export default function ExpenseTracker() {
   const [catDraft, setCatDraft] = useState("");
   const [expandedCat, setExpandedCat] = useState(null);
   const [expandedSubcat, setExpandedSubcat] = useState(null);
+  const [pieExpandedCat, setPieExpandedCat] = useState(null);
+  const [pieExpandedSubcat, setPieExpandedSubcat] = useState(null);
   const [expandedIncomeCat, setExpandedIncomeCat] = useState(null);
   const [saveState, setSaveState] = useState("idle");
   const saveTimer = useRef(null);
@@ -242,23 +244,6 @@ export default function ExpenseTracker() {
     [catTotals]
   );
 
-  // --- Détail par sous-catégorie du mois en cours ---
-  const subcatTotals = useMemo(() => {
-    const map = {};
-    monthExpenses.forEach((e) => {
-      const sub = e.subcategory || "Non précisé";
-      const k = `${e.category}__${sub}`;
-      map[k] = (map[k] || 0) + e.amount;
-    });
-    return Object.entries(map)
-      .map(([k, value]) => {
-        const [catKey, sub] = k.split("__");
-        const def = CAT_MAP[catKey] || FALLBACK_CAT;
-        return { catKey, catLabel: def.label, color: def.color, icon: def.icon, sub, value };
-      })
-      .sort((a, b) => b.value - a.value);
-  }, [monthExpenses]);
-
   // --- Répartition des revenus du mois en cours ---
   const incomeTotals = useMemo(() => {
     const map = {};
@@ -296,6 +281,20 @@ export default function ExpenseTracker() {
       return { key, label, income: inc, expense: exp, savings, cumulative: running };
     });
   }, [expenses, incomes, allMonths]);
+
+  // --- Évolution des dépenses par catégorie, mois par mois (historique complet) ---
+  const categoryMonthlyData = useMemo(() => {
+    return allMonths.map((key) => {
+      const [y, m] = key.split("-");
+      const label = new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
+      const monthExp = expenses.filter((e) => e.date.slice(0, 7) === key);
+      const row = { key, label };
+      CATEGORIES.forEach((c) => {
+        row[c.key] = round2(monthExp.filter((e) => e.category === c.key).reduce((s, e) => s + e.amount, 0));
+      });
+      return row;
+    });
+  }, [expenses, allMonths]);
 
   const ledger = useMemo(() => {
     const items = [
@@ -752,10 +751,8 @@ export default function ExpenseTracker() {
 
         {tab === "stats" && (
           <div className="flex flex-col gap-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               {[
-                { label: "Revenu moyen (6 mois)", value: fmt(avgIncome), color: "var(--sage)" },
-                { label: "Dépense moyenne (6 mois)", value: fmt(avgExpense), color: "var(--coral)" },
                 { label: "Taux d'épargne moyen", value: avgSavingsRate === null ? "—" : `${Math.round(avgSavingsRate)}%`, color: "var(--petrol)" },
                 { label: "Épargné sur 6 mois", value: fmt(cumulSavings), color: cumulSavings >= 0 ? "var(--sage)" : "var(--coral)" },
               ].map((s) => (
@@ -825,46 +822,91 @@ export default function ExpenseTracker() {
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
-                  <div className="flex-1 flex flex-col gap-2 w-full">
-                    {pieData.map((d) => (
-                      <div key={d.key} className="ledger-row text-sm">
-                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.color }} />
-                        <span className="shrink-0">{d.name}</span>
-                        <span className="dots" />
-                        <span className="fx-mono shrink-0">{fmt(d.value)}</span>
-                      </div>
-                    ))}
+                  <div className="flex-1 flex flex-col gap-1.5 w-full">
+                    {pieData.map((d) => {
+                      const catDef = CAT_MAP[d.key] || FALLBACK_CAT;
+                      const hasSubs = catDef.subcategories.length > 0;
+                      const isOpen = pieExpandedCat === d.key;
+
+                      let subRows = [];
+                      let flatTx = [];
+                      if (isOpen) {
+                        const catTxAll = monthExpenses.filter((e) => e.category === d.key);
+                        if (hasSubs) {
+                          const map = {};
+                          catTxAll.forEach((e) => {
+                            const sub = e.subcategory || "Non précisé";
+                            if (!map[sub]) map[sub] = { sub, total: 0, items: [] };
+                            map[sub].total += e.amount;
+                            map[sub].items.push(e);
+                          });
+                          subRows = Object.values(map).sort((a, b) => b.total - a.total);
+                        } else {
+                          flatTx = [...catTxAll].sort((a, b) => (a.date < b.date ? 1 : -1));
+                        }
+                      }
+
+                      return (
+                        <div key={d.key}>
+                          <div className="ledger-row text-sm" style={{ cursor: "pointer" }}
+                            onClick={() => { setPieExpandedCat(isOpen ? null : d.key); setPieExpandedSubcat(null); }}>
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.color }} />
+                            <span className="shrink-0">{d.name}</span>
+                            <span className="dots" />
+                            <span className="fx-mono shrink-0">{fmt(d.value)}</span>
+                            <ChevronDown size={13} className="shrink-0" style={{ opacity: 0.4, transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+                          </div>
+
+                          {isOpen && !hasSubs && (
+                            <div className="flex flex-col gap-1 py-2 pl-4" style={{ borderLeft: `2px solid ${d.color}`, marginLeft: "5px" }}>
+                              {flatTx.length === 0 ? (
+                                <p className="text-xs py-1" style={{ opacity: 0.5 }}>Aucune transaction ce mois-ci.</p>
+                              ) : (
+                                flatTx.map((e) => renderTxRow(e, "expense"))
+                              )}
+                            </div>
+                          )}
+
+                          {isOpen && hasSubs && (
+                            <div className="flex flex-col gap-1.5 py-2 pl-4" style={{ borderLeft: `2px solid ${d.color}`, marginLeft: "5px" }}>
+                              {subRows.map(({ sub, total, items }) => {
+                                const subKey = `${d.key}::${sub}`;
+                                const subOpen = pieExpandedSubcat === subKey;
+                                const subPct = d.value > 0 ? (total / d.value) * 100 : 0;
+                                return (
+                                  <div key={sub}>
+                                    <div className="cat-track" style={{ height: "28px", cursor: "pointer" }}
+                                      onClick={() => setPieExpandedSubcat(subOpen ? null : subKey)}>
+                                      <div className="cat-fill" style={{ width: `${subPct}%`, background: d.color, opacity: 0.28 }} />
+                                      <div className="relative h-full flex items-center px-3 gap-2 ledger-row">
+                                        <span className="text-sm shrink-0">{sub}</span>
+                                        <span className="dots" />
+                                        <span className="fx-mono text-xs shrink-0">{fmt(total)}</span>
+                                        <span className="text-xs shrink-0 opacity-45 w-8 text-right">{Math.round(subPct)}%</span>
+                                        <ChevronDown size={11} className="shrink-0" style={{ opacity: 0.4, transform: subOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+                                      </div>
+                                    </div>
+                                    {subOpen && (
+                                      <div className="flex flex-col gap-1 py-2 pl-4" style={{ borderLeft: `2px solid ${d.color}`, marginLeft: "10px" }}>
+                                        {items
+                                          .sort((a, b) => (a.date < b.date ? 1 : -1))
+                                          .map((e) => renderTxRow(e, "expense"))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Détail par sous-catégorie (mois en cours) */}
-            <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
-              <h2 className="fx-display text-lg font-medium mb-1">Détail par sous-catégorie</h2>
-              <p className="text-xs mb-4" style={{ opacity: 0.55 }}>Mois en cours</p>
-              {subcatTotals.length === 0 ? (
-                <p className="text-sm py-4 text-center" style={{ opacity: 0.5 }}>Aucune dépense ce mois-ci.</p>
-              ) : (
-                <div className="flex flex-col gap-1.5">
-                  {subcatTotals.map((s, i) => {
-                    const Icon = s.icon;
-                    return (
-                      <div key={i} className="ledger-row text-sm py-1">
-                        <span className="w-5 h-5 rounded flex items-center justify-center shrink-0" style={{ background: s.color }}>
-                          <Icon size={11} color="#fff" />
-                        </span>
-                        <span className="shrink-0" style={{ opacity: 0.55 }}>{s.catLabel}</span>
-                        <span className="shrink-0" style={{ opacity: 0.3 }}>·</span>
-                        <span className="shrink-0 font-medium">{s.sub}</span>
-                        <span className="dots" />
-                        <span className="fx-mono shrink-0">{fmt(s.value)}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+
 
             <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
               <h2 className="fx-display text-lg font-medium mb-4">Revenus vs dépenses</h2>
@@ -944,6 +986,30 @@ export default function ExpenseTracker() {
                       <Tooltip formatter={(v) => fmt(v)} contentStyle={{ fontFamily: "IBM Plex Sans", fontSize: 12, borderRadius: 8, border: "1px solid var(--line)" }} />
                       <Area type="monotone" dataKey="expense" name="Dépenses" stroke="#C05A3D" fill="#C05A3D" fillOpacity={0.18} strokeWidth={2} />
                     </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+
+            {/* Évolution des dépenses par catégorie (historique complet, barres empilées) */}
+            <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
+              <h2 className="fx-display text-lg font-medium mb-1">Évolution des dépenses par catégorie</h2>
+              <p className="text-xs mb-4" style={{ opacity: 0.55 }}>Depuis votre première écriture</p>
+              {categoryMonthlyData.length === 0 ? (
+                <p className="text-sm py-6 text-center" style={{ opacity: 0.5 }}>Pas encore assez de données.</p>
+              ) : (
+                <div style={{ height: 260 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ReBarChart data={categoryMonthlyData} margin={{ top: 4, right: 4, left: -14, bottom: 0 }}>
+                      <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
+                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--ink)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
+                      <YAxis tick={{ fontSize: 10, fill: "var(--ink)" }} axisLine={false} tickLine={false} width={40} />
+                      <Tooltip formatter={(v) => fmt(v)} contentStyle={{ fontFamily: "IBM Plex Sans", fontSize: 12, borderRadius: 8, border: "1px solid var(--line)" }} />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      {CATEGORIES.map((c) => (
+                        <Bar key={c.key} dataKey={c.key} name={c.label} stackId="cat" fill={c.color} radius={[0, 0, 0, 0]} />
+                      ))}
+                    </ReBarChart>
                   </ResponsiveContainer>
                 </div>
               )}
