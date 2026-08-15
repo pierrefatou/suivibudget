@@ -830,54 +830,6 @@ export default function ExpenseTracker() {
               ))}
             </div>
 
-            {/* Simulateur coûts voiture & déplacements pro */}
-            <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
-              <h2 className="fx-display text-lg font-medium mb-1">Simulateur voiture & déplacements pro</h2>
-              <p className="text-xs mb-4" style={{ opacity: 0.55 }}>Mois en cours — coûts réels calculés depuis tes transactions, à comparer au remboursement NDF</p>
-
-              <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--coral)", letterSpacing: "0.08em" }}>Sorties</p>
-              <div className="flex flex-col gap-1.5 mb-4">
-                {[
-                  { label: "Crédit voiture", value: carSim.credit },
-                  { label: "Assurance voiture", value: carSim.assurance },
-                  { label: "Essence", value: carSim.essence },
-                  { label: "Autoroute", value: carSim.autoroute },
-                  { label: "Hôtel", value: carSim.hotel },
-                  { label: "Repas NDF", value: carSim.repas },
-                ].map((l) => (
-                  <div key={l.label} className="ledger-row text-sm">
-                    <span className="shrink-0">{l.label}</span>
-                    <span className="dots" />
-                    <span className="fx-mono shrink-0">{fmt(l.value)}</span>
-                  </div>
-                ))}
-                <div className="ledger-row text-sm pt-2 mt-1" style={{ borderTop: "1px solid var(--line)" }}>
-                  <span className="shrink-0 font-medium">Total sorties</span>
-                  <span className="dots" />
-                  <span className="fx-mono shrink-0 font-medium">{fmt(carSimTotal)}</span>
-                </div>
-              </div>
-
-              <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--sage)", letterSpacing: "0.08em" }}>Entrée</p>
-              <div className="ledger-row text-sm mb-4">
-                <span className="shrink-0">Montant remboursé NDF</span>
-                <span className="text-xs shrink-0" style={{ opacity: 0.45 }}>(saisie manuelle)</span>
-                <span className="dots" />
-                <input type="number" step="0.01" min="0" placeholder="0"
-                  value={ndfReimbursements[currentKey] ?? ""}
-                  onChange={(e) => setNdfReimbursements((prev) => ({ ...prev, [currentKey]: e.target.value }))}
-                  style={{ width: "100px" }} className="fx-mono text-right" />
-              </div>
-
-              <div className="rounded-lg px-4 py-3 flex items-center justify-between"
-                style={{ background: carSimDelta >= 0 ? "rgba(79,120,89,0.1)" : "rgba(192,90,61,0.1)" }}>
-                <span className="text-sm font-medium">Delta (entrée − sorties)</span>
-                <span className="fx-mono text-lg font-medium" style={{ color: carSimDelta >= 0 ? "var(--sage)" : "var(--coral)" }}>
-                  {carSimDelta >= 0 ? "+" : ""}{fmt(carSimDelta)}
-                </span>
-              </div>
-            </div>
-
             {/* Détail du mois en cours */}
             <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
               <h2 className="fx-display text-lg font-medium mb-4">Ce mois-ci en détail</h2>
@@ -1161,6 +1113,54 @@ export default function ExpenseTracker() {
                   </ResponsiveContainer>
                 </div>
               )}
+            </div>
+
+            {/* Simulateur coûts voiture & déplacements pro */}
+            <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
+              <h2 className="fx-display text-lg font-medium mb-1">Simulateur voiture & déplacements pro</h2>
+              <p className="text-xs mb-4" style={{ opacity: 0.55 }}>Mois en cours — coûts réels calculés depuis tes transactions, à comparer au remboursement NDF</p>
+
+              <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--coral)", letterSpacing: "0.08em" }}>Sorties</p>
+              <div className="flex flex-col gap-1.5 mb-4">
+                {[
+                  { label: "Crédit voiture", value: carSim.credit },
+                  { label: "Assurance voiture", value: carSim.assurance },
+                  { label: "Essence", value: carSim.essence },
+                  { label: "Autoroute", value: carSim.autoroute },
+                  { label: "Hôtel", value: carSim.hotel },
+                  { label: "Repas NDF", value: carSim.repas },
+                ].map((l) => (
+                  <div key={l.label} className="ledger-row text-sm">
+                    <span className="shrink-0">{l.label}</span>
+                    <span className="dots" />
+                    <span className="fx-mono shrink-0">{fmt(l.value)}</span>
+                  </div>
+                ))}
+                <div className="ledger-row text-sm pt-2 mt-1" style={{ borderTop: "1px solid var(--line)" }}>
+                  <span className="shrink-0 font-medium">Total sorties</span>
+                  <span className="dots" />
+                  <span className="fx-mono shrink-0 font-medium">{fmt(carSimTotal)}</span>
+                </div>
+              </div>
+
+              <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--sage)", letterSpacing: "0.08em" }}>Entrée</p>
+              <div className="ledger-row text-sm mb-4">
+                <span className="shrink-0">Montant remboursé NDF</span>
+                <span className="text-xs shrink-0" style={{ opacity: 0.45 }}>(saisie manuelle)</span>
+                <span className="dots" />
+                <input type="number" step="0.01" min="0" placeholder="0"
+                  value={ndfReimbursements[currentKey] ?? ""}
+                  onChange={(e) => setNdfReimbursements((prev) => ({ ...prev, [currentKey]: e.target.value }))}
+                  style={{ width: "100px" }} className="fx-mono text-right" />
+              </div>
+
+              <div className="rounded-lg px-4 py-3 flex items-center justify-between"
+                style={{ background: carSimDelta >= 0 ? "rgba(79,120,89,0.1)" : "rgba(192,90,61,0.1)" }}>
+                <span className="text-sm font-medium">Delta (entrée − sorties)</span>
+                <span className="fx-mono text-lg font-medium" style={{ color: carSimDelta >= 0 ? "var(--sage)" : "var(--coral)" }}>
+                  {carSimDelta >= 0 ? "+" : ""}{fmt(carSimDelta)}
+                </span>
+              </div>
             </div>
 
             <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
