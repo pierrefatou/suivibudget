@@ -69,7 +69,7 @@ export default function ExpenseTracker() {
   const [incomes, setIncomes] = useState([]);
   const [catBudgets, setCatBudgets] = useState(DEFAULT_CAT_BUDGETS);
   const [savingsGoal, setSavingsGoal] = useState(300);
-  const [ndfReimbursements, setNdfReimbursements] = useState({}); // { "2026-07": "450", ... }
+  const [salaryBreakdown, setSalaryBreakdown] = useState({}); // { "2026-07": { fixe, variable, ndf } }
   const [loaded, setLoaded] = useState(false);
   const [current, setCurrent] = useState(() => {
     const d = new Date();
@@ -156,7 +156,7 @@ export default function ExpenseTracker() {
             setSavingsGoal(s.savingsGoal);
             setGoalDraft(String(s.savingsGoal));
           }
-          if (s.ndfReimbursements) setNdfReimbursements(s.ndfReimbursements);
+          if (s.salaryBreakdown) setSalaryBreakdown(s.salaryBreakdown);
         }
       } catch (e) {}
       setLoaded(true);
@@ -171,14 +171,14 @@ export default function ExpenseTracker() {
       try {
         await storage.set("expenses", JSON.stringify(expenses));
         await storage.set("incomes", JSON.stringify(incomes));
-        await storage.set("settings", JSON.stringify({ catBudgets, savingsGoal, ndfReimbursements }));
+        await storage.set("settings", JSON.stringify({ catBudgets, savingsGoal, salaryBreakdown }));
         setSaveState("saved");
       } catch (e) {
         setSaveState("error");
       }
     }, 400);
     return () => clearTimeout(saveTimer.current);
-  }, [expenses, incomes, catBudgets, savingsGoal, ndfReimbursements, loaded]);
+  }, [expenses, incomes, catBudgets, savingsGoal, salaryBreakdown, loaded]);
 
   const currentKey = monthKey(current);
   const monthExpenses = useMemo(
@@ -266,6 +266,20 @@ export default function ExpenseTracker() {
     [catTotals]
   );
 
+  // --- Décomposition du salaire (mois en cours, saisie manuelle Fixe/Variable/NDF) ---
+  const salaireTotal = useMemo(
+    () => monthIncomes.filter((e) => e.category === "salaires").reduce((s, e) => s + e.amount, 0),
+    [monthIncomes]
+  );
+  const sbDraft = salaryBreakdown[currentKey] || {};
+  const sbFixe = parseFloat(String(sbDraft.fixe || "0").replace(",", ".")) || 0;
+  const sbVariable = parseFloat(String(sbDraft.variable || "0").replace(",", ".")) || 0;
+  const sbNdf = parseFloat(String(sbDraft.ndf || "0").replace(",", ".")) || 0;
+  const sbDelta = round2(salaireTotal - (sbFixe + sbVariable + sbNdf));
+  const updateSalaryBreakdown = (field, value) => {
+    setSalaryBreakdown((prev) => ({ ...prev, [currentKey]: { ...(prev[currentKey] || {}), [field]: value } }));
+  };
+
   // --- Simulateur coûts voiture & déplacements pro (mois en cours) ---
   const carSim = useMemo(() => {
     const sum = (catKey, sub) =>
@@ -280,7 +294,7 @@ export default function ExpenseTracker() {
     };
   }, [monthExpenses]);
   const carSimTotal = carSim.credit + carSim.assurance + carSim.essence + carSim.autoroute + carSim.hotel + carSim.repas;
-  const ndfReimbursedAmount = parseFloat(String(ndfReimbursements[currentKey] || "0").replace(",", ".")) || 0;
+  const ndfReimbursedAmount = sbNdf;
   const carSimDelta = round2(ndfReimbursedAmount - carSimTotal);
 
   // --- Répartition des revenus du mois en cours ---
@@ -1115,6 +1129,43 @@ export default function ExpenseTracker() {
               )}
             </div>
 
+            {/* Décomposition du salaire */}
+            <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
+              <h2 className="fx-display text-lg font-medium mb-1">Décomposition du salaire</h2>
+              <p className="text-xs mb-4" style={{ opacity: 0.55 }}>Mois en cours — ton relevé bancaire affiche un seul virement, répartis-le ici selon ton bulletin de paie</p>
+
+              <div className="ledger-row text-sm mb-3">
+                <span className="shrink-0 font-medium">Salaire perçu (banque)</span>
+                <span className="dots" />
+                <span className="fx-mono shrink-0 font-medium">{fmt(salaireTotal)}</span>
+              </div>
+
+              <div className="flex flex-col gap-2 mb-3">
+                {[
+                  { field: "fixe", label: "Fixe" },
+                  { field: "variable", label: "Variable" },
+                  { field: "ndf", label: "NDF" },
+                ].map((f) => (
+                  <div key={f.field} className="ledger-row text-sm">
+                    <span className="shrink-0">{f.label}</span>
+                    <span className="dots" />
+                    <input type="number" step="0.01" min="0" placeholder="0"
+                      value={sbDraft[f.field] ?? ""}
+                      onChange={(e) => updateSalaryBreakdown(f.field, e.target.value)}
+                      style={{ width: "100px" }} className="fx-mono text-right" />
+                  </div>
+                ))}
+              </div>
+
+              <div className="rounded-lg px-4 py-2.5 flex items-center justify-between"
+                style={{ background: Math.abs(sbDelta) < 0.01 ? "rgba(79,120,89,0.1)" : "rgba(192,90,61,0.1)" }}>
+                <span className="text-sm font-medium">Écart avec le salaire perçu</span>
+                <span className="fx-mono text-sm font-medium" style={{ color: Math.abs(sbDelta) < 0.01 ? "var(--sage)" : "var(--coral)" }}>
+                  {fmt(sbDelta)}
+                </span>
+              </div>
+            </div>
+
             {/* Simulateur coûts voiture & déplacements pro */}
             <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
               <h2 className="fx-display text-lg font-medium mb-1">Simulateur voiture & déplacements pro</h2>
@@ -1146,12 +1197,9 @@ export default function ExpenseTracker() {
               <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--sage)", letterSpacing: "0.08em" }}>Entrée</p>
               <div className="ledger-row text-sm mb-4">
                 <span className="shrink-0">Montant remboursé NDF</span>
-                <span className="text-xs shrink-0" style={{ opacity: 0.45 }}>(saisie manuelle)</span>
+                <span className="text-xs shrink-0" style={{ opacity: 0.45 }}>(défini dans l'encart ci-dessus)</span>
                 <span className="dots" />
-                <input type="number" step="0.01" min="0" placeholder="0"
-                  value={ndfReimbursements[currentKey] ?? ""}
-                  onChange={(e) => setNdfReimbursements((prev) => ({ ...prev, [currentKey]: e.target.value }))}
-                  style={{ width: "100px" }} className="fx-mono text-right" />
+                <span className="fx-mono shrink-0">{fmt(ndfReimbursedAmount)}</span>
               </div>
 
               <div className="rounded-lg px-4 py-3 flex items-center justify-between"
