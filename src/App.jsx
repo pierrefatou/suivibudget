@@ -64,12 +64,26 @@ const firstSubcat = (catKey) => {
   return def && def.subcategories && def.subcategories.length ? def.subcategories[0] : "";
 };
 
+const TRIP_CATEGORIES = ["Restaurant", "Logement", "Déplacement", "Activités", "Autre"];
+const TRIP_CAT_COLORS = {
+  Restaurant: "#4F7859",
+  Logement: "#1F3A3E",
+  "Déplacement": "#B8901F",
+  "Activités": "#C05A3D",
+  Autre: "#7E7E74",
+};
+// Catégorie principale suggérée par défaut à la création d'une dépense de voyage
+const TRIP_CAT_TO_MAIN = { Restaurant: "alimentation", Logement: "logement", "Déplacement": "transport", "Activités": "loisirs", Autre: "autres" };
+// Catégorie de voyage suggérée par défaut à l'import d'une dépense existante
+const MAIN_TO_TRIP_CAT = { alimentation: "Restaurant", logement: "Logement", transport: "Déplacement", loisirs: "Activités", voyage: "Activités", ndf: "Logement", sante: "Autre", abonnements: "Autre", autres: "Autre" };
+
 export default function ExpenseTracker() {
   const [expenses, setExpenses] = useState([]);
   const [incomes, setIncomes] = useState([]);
   const [catBudgets, setCatBudgets] = useState(DEFAULT_CAT_BUDGETS);
   const [savingsGoal, setSavingsGoal] = useState(300);
   const [salaryBreakdown, setSalaryBreakdown] = useState({}); // { "2026-07": { fixe, variable, ndf } }
+  const [trips, setTrips] = useState([]); // [{ id, title, createdDate }]
   const [loaded, setLoaded] = useState(false);
   const [current, setCurrent] = useState(() => {
     const d = new Date();
@@ -134,6 +148,10 @@ export default function ExpenseTracker() {
   const [pieExpandedCat, setPieExpandedCat] = useState(null);
   const [pieExpandedSubcat, setPieExpandedSubcat] = useState(null);
   const [expandedIncomeCat, setExpandedIncomeCat] = useState(null);
+  const [expandedTrip, setExpandedTrip] = useState(null);
+  const [newTripTitle, setNewTripTitle] = useState("");
+  const [tripAddDraft, setTripAddDraft] = useState({ description: "", amount: "", date: todayISO(), tripCategory: "Autre" });
+  const [tripImportSearch, setTripImportSearch] = useState("");
   const [saveState, setSaveState] = useState("idle");
   const saveTimer = useRef(null);
 
@@ -146,6 +164,10 @@ export default function ExpenseTracker() {
       try {
         const res = await storage.get("incomes");
         if (res && res.value) setIncomes(JSON.parse(res.value));
+      } catch (e) {}
+      try {
+        const res = await storage.get("trips");
+        if (res && res.value) setTrips(JSON.parse(res.value));
       } catch (e) {}
       try {
         const res = await storage.get("settings");
@@ -171,6 +193,7 @@ export default function ExpenseTracker() {
       try {
         await storage.set("expenses", JSON.stringify(expenses));
         await storage.set("incomes", JSON.stringify(incomes));
+        await storage.set("trips", JSON.stringify(trips));
         await storage.set("settings", JSON.stringify({ catBudgets, savingsGoal, salaryBreakdown }));
         setSaveState("saved");
       } catch (e) {
@@ -178,7 +201,7 @@ export default function ExpenseTracker() {
       }
     }, 400);
     return () => clearTimeout(saveTimer.current);
-  }, [expenses, incomes, catBudgets, savingsGoal, salaryBreakdown, loaded]);
+  }, [expenses, incomes, trips, catBudgets, savingsGoal, salaryBreakdown, loaded]);
 
   const currentKey = monthKey(current);
   const monthExpenses = useMemo(
@@ -349,6 +372,28 @@ export default function ExpenseTracker() {
     });
   }, [expenses, allMonths]);
 
+  // --- Voyages : totaux et répartition par sous-catégorie de voyage ---
+  const tripsWithTotals = useMemo(() => {
+    return trips
+      .map((t) => {
+        const items = expenses.filter((e) => e.tripId === t.id);
+        const total = items.reduce((s, e) => s + e.amount, 0);
+        const byCat = {};
+        TRIP_CATEGORIES.forEach((c) => (byCat[c] = 0));
+        items.forEach((e) => {
+          const tc = e.tripCategory || "Autre";
+          byCat[tc] = (byCat[tc] || 0) + e.amount;
+        });
+        return { ...t, items: items.sort((a, b) => (a.date < b.date ? 1 : -1)), total, byCat };
+      })
+      .sort((a, b) => (a.createdDate < b.createdDate ? 1 : -1));
+  }, [trips, expenses]);
+
+  const unassignedExpenses = useMemo(
+    () => [...expenses].filter((e) => !e.tripId).sort((a, b) => (a.date < b.date ? 1 : -1)),
+    [expenses]
+  );
+
   const ledger = useMemo(() => {
     const items = [
       ...monthExpenses.map((e) => ({ ...e, type: "expense" })),
@@ -504,6 +549,45 @@ export default function ExpenseTracker() {
     const num = parseFloat(String(catDraft).replace(",", "."));
     if (Number.isFinite(num) && num >= 0) setCatBudgets((prev) => ({ ...prev, [key]: round2(num) }));
     setEditingCat(null);
+  };
+
+  // --- Voyages ---
+  const createTrip = () => {
+    const title = newTripTitle.trim();
+    if (!title) return;
+    const id = uid();
+    setTrips((prev) => [...prev, { id, title, createdDate: todayISO() }]);
+    setNewTripTitle("");
+    setExpandedTrip(id);
+  };
+  const deleteTrip = (tripId) => {
+    setTrips((prev) => prev.filter((t) => t.id !== tripId));
+    setExpenses((prev) => prev.map((e) => (e.tripId === tripId ? { ...e, tripId: null, tripCategory: null } : e)));
+    if (expandedTrip === tripId) setExpandedTrip(null);
+  };
+  const importExpenseToTrip = (tripId, expenseId) => {
+    setExpenses((prev) => prev.map((e) => {
+      if (e.id !== expenseId) return e;
+      const tripCategory = MAIN_TO_TRIP_CAT[e.category] || "Autre";
+      return { ...e, tripId, tripCategory };
+    }));
+  };
+  const removeExpenseFromTrip = (expenseId) => {
+    setExpenses((prev) => prev.map((e) => (e.id === expenseId ? { ...e, tripId: null, tripCategory: null } : e)));
+  };
+  const changeTripCategory = (expenseId, newTripCategory) => {
+    setExpenses((prev) => prev.map((e) => (e.id === expenseId ? { ...e, tripCategory: newTripCategory } : e)));
+  };
+  const addTripExpense = (tripId) => {
+    const num = parseFloat(String(tripAddDraft.amount).replace(",", "."));
+    if (!tripAddDraft.description.trim() || !Number.isFinite(num) || num <= 0 || !tripAddDraft.date) return;
+    const mainCategory = TRIP_CAT_TO_MAIN[tripAddDraft.tripCategory] || "autres";
+    setExpenses((prev) => [...prev, {
+      id: uid(), description: tripAddDraft.description.trim(), amount: round2(num), date: tripAddDraft.date,
+      category: mainCategory, subcategory: firstSubcat(mainCategory),
+      tripId, tripCategory: tripAddDraft.tripCategory,
+    }]);
+    setTripAddDraft({ description: "", amount: "", date: todayISO(), tripCategory: "Autre" });
   };
 
   const hasSubcats = CAT_MAP[cat] && CAT_MAP[cat].subcategories.length > 0;
@@ -1209,6 +1293,155 @@ export default function ExpenseTracker() {
                   {carSimDelta >= 0 ? "+" : ""}{fmt(carSimDelta)}
                 </span>
               </div>
+            </div>
+
+            {/* Mes voyages */}
+            <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
+              <h2 className="fx-display text-lg font-medium mb-1">Mes voyages</h2>
+              <p className="text-xs mb-4" style={{ opacity: 0.55 }}>Regroupe des dépenses existantes (ou nouvelles) sous un voyage pour voir leur répartition par poste</p>
+
+              <div className="flex gap-2 mb-4">
+                <input type="text" placeholder="Titre du voyage (ex. Rome 2026)" value={newTripTitle}
+                  onChange={(e) => setNewTripTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && createTrip()} />
+                <button onClick={createTrip} className="shrink-0 flex items-center gap-1 rounded-lg px-3 text-sm font-medium" style={{ background: "var(--petrol)", color: "#fff" }}>
+                  <Plus size={15} /> Créer
+                </button>
+              </div>
+
+              {tripsWithTotals.length === 0 ? (
+                <p className="text-sm py-4 text-center" style={{ opacity: 0.5 }}>Aucun voyage pour l'instant. Crée-en un ci-dessus.</p>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {tripsWithTotals.map((t) => {
+                    const isOpen = expandedTrip === t.id;
+                    return (
+                      <div key={t.id} className="rounded-lg" style={{ border: "1px solid var(--line)" }}>
+                        <div className="flex items-center gap-2.5 px-3 py-2.5" style={{ cursor: "pointer" }}
+                          onClick={() => { setExpandedTrip(isOpen ? null : t.id); setTripImportSearch(""); }}>
+                          <Plane size={15} style={{ color: "var(--petrol)" }} className="shrink-0" />
+                          <span className="text-sm font-medium shrink-0">{t.title}</span>
+                          <span className="dots" />
+                          <span className="fx-mono text-sm shrink-0">{fmt(t.total)}</span>
+                          <button onClick={(e) => { e.stopPropagation(); if (window.confirm(`Supprimer le voyage "${t.title}" ? Les dépenses associées ne seront pas supprimées, juste détachées.`)) deleteTrip(t.id); }}
+                            aria-label="Supprimer le voyage" className="shrink-0 p-1 opacity-50 hover:opacity-100">
+                            <Trash2 size={13} style={{ color: "var(--coral)" }} />
+                          </button>
+                          <ChevronDown size={14} className="shrink-0" style={{ opacity: 0.4, transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+                        </div>
+
+                        {isOpen && (
+                          <div className="px-3 pb-3 pt-2 flex flex-col gap-4" style={{ borderTop: "1px solid var(--line)" }}>
+                            {t.total > 0 && (
+                              <div className="flex flex-col gap-1.5">
+                                {TRIP_CATEGORIES.filter((c) => t.byCat[c] > 0).map((c) => {
+                                  const pct = t.total > 0 ? (t.byCat[c] / t.total) * 100 : 0;
+                                  return (
+                                    <div key={c} className="cat-track" style={{ height: "28px" }}>
+                                      <div className="cat-fill" style={{ width: `${pct}%`, background: TRIP_CAT_COLORS[c] }} />
+                                      <div className="relative h-full flex items-center px-3 gap-2 ledger-row">
+                                        <span className="text-sm shrink-0">{c}</span>
+                                        <span className="dots" />
+                                        <span className="fx-mono text-xs shrink-0">{fmt(t.byCat[c])}</span>
+                                        <span className="text-xs shrink-0 opacity-45 w-8 text-right">{Math.round(pct)}%</span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            <div className="flex flex-col gap-1">
+                              {t.items.length === 0 ? (
+                                <p className="text-xs py-1" style={{ opacity: 0.5 }}>Aucune dépense dans ce voyage pour l'instant.</p>
+                              ) : (
+                                t.items.map((e) => {
+                                  const c = CAT_MAP[e.category] || FALLBACK_CAT;
+                                  const Icon = c.icon;
+                                  return (
+                                    <div key={e.id} className="ledger-row group text-sm py-1">
+                                      <span className="w-5 h-5 rounded flex items-center justify-center shrink-0" style={{ background: TRIP_CAT_COLORS[e.tripCategory] || TRIP_CAT_COLORS.Autre }}>
+                                        <Icon size={11} color="#fff" />
+                                      </span>
+                                      <span className="fx-mono shrink-0 text-xs" style={{ opacity: 0.5, width: "32px" }}>{e.date.slice(8, 10)}/{e.date.slice(5, 7)}</span>
+                                      <span className="shrink-0 max-w-[26%] truncate">{e.description}</span>
+                                      <select value={e.tripCategory || "Autre"} onChange={(ev) => changeTripCategory(e.id, ev.target.value)}
+                                        style={{ width: "auto", padding: "2px 6px", fontSize: "12px" }}>
+                                        {TRIP_CATEGORIES.map((tc) => <option key={tc} value={tc}>{tc}</option>)}
+                                      </select>
+                                      <span className="dots" />
+                                      <span className="fx-mono text-sm shrink-0">{fmt(e.amount)}</span>
+                                      <button onClick={() => removeExpenseFromTrip(e.id)} aria-label="Retirer du voyage" title="Retirer du voyage"
+                                        className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
+                                        <X size={13} style={{ color: "var(--ink)" }} />
+                                      </button>
+                                      <button onClick={() => removeEntry(e.id, "expense")} aria-label="Supprimer définitivement" title="Supprimer définitivement"
+                                        className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
+                                        <Trash2 size={13} style={{ color: "var(--coral)" }} />
+                                      </button>
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
+
+                            <div className="rounded-lg p-3" style={{ background: "rgba(31,58,62,0.04)" }}>
+                              <p className="text-xs font-medium mb-2" style={{ opacity: 0.6 }}>Ajouter une dépense</p>
+                              <div className="flex flex-col gap-2">
+                                <input type="text" placeholder="Description" value={tripAddDraft.description}
+                                  onChange={(e) => setTripAddDraft((d) => ({ ...d, description: e.target.value }))} />
+                                <div className="flex gap-2">
+                                  <input type="number" step="0.01" min="0" placeholder="Montant" value={tripAddDraft.amount}
+                                    onChange={(e) => setTripAddDraft((d) => ({ ...d, amount: e.target.value }))} style={{ width: "34%" }} />
+                                  <input type="date" value={tripAddDraft.date}
+                                    onChange={(e) => setTripAddDraft((d) => ({ ...d, date: e.target.value }))} style={{ width: "36%" }} />
+                                  <select value={tripAddDraft.tripCategory} onChange={(e) => setTripAddDraft((d) => ({ ...d, tripCategory: e.target.value }))} style={{ width: "30%" }}>
+                                    {TRIP_CATEGORIES.map((tc) => <option key={tc} value={tc}>{tc}</option>)}
+                                  </select>
+                                </div>
+                                <button onClick={() => addTripExpense(t.id)} className="flex items-center justify-center gap-1.5 rounded-lg py-2 text-sm font-medium" style={{ background: "var(--petrol)", color: "#fff" }}>
+                                  <Plus size={14} /> Ajouter au voyage
+                                </button>
+                              </div>
+                            </div>
+
+                            <div>
+                              <p className="text-xs font-medium mb-2" style={{ opacity: 0.6 }}>Importer une dépense existante</p>
+                              <input type="text" placeholder="Rechercher par description..." value={tripImportSearch}
+                                onChange={(e) => setTripImportSearch(e.target.value)} style={{ marginBottom: "8px" }} />
+                              <div className="flex flex-col gap-1" style={{ maxHeight: "210px", overflowY: "auto" }}>
+                                {unassignedExpenses
+                                  .filter((e) => tripImportSearch.trim() === "" || e.description.toLowerCase().includes(tripImportSearch.trim().toLowerCase()))
+                                  .slice(0, tripImportSearch.trim() === "" ? 10 : 25)
+                                  .map((e) => {
+                                    const c = CAT_MAP[e.category] || FALLBACK_CAT;
+                                    const Icon = c.icon;
+                                    return (
+                                      <div key={e.id} className="ledger-row text-sm py-1">
+                                        <span className="w-5 h-5 rounded flex items-center justify-center shrink-0" style={{ background: c.color }}>
+                                          <Icon size={11} color="#fff" />
+                                        </span>
+                                        <span className="fx-mono shrink-0 text-xs" style={{ opacity: 0.5, width: "32px" }}>{e.date.slice(8, 10)}/{e.date.slice(5, 7)}</span>
+                                        <span className="shrink-0 max-w-[38%] truncate">{e.description}</span>
+                                        <span className="dots" />
+                                        <span className="fx-mono text-sm shrink-0">{fmt(e.amount)}</span>
+                                        <button onClick={() => importExpenseToTrip(t.id, e.id)} className="shrink-0 text-xs px-2 py-1 rounded-md font-medium" style={{ background: "var(--sage)", color: "#fff" }}>
+                                          Ajouter
+                                        </button>
+                                      </div>
+                                    );
+                                  })}
+                                {unassignedExpenses.filter((e) => tripImportSearch.trim() === "" || e.description.toLowerCase().includes(tripImportSearch.trim().toLowerCase())).length === 0 && (
+                                  <p className="text-xs py-2" style={{ opacity: 0.5 }}>Aucune dépense non assignée ne correspond.</p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
