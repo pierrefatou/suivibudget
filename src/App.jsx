@@ -101,6 +101,7 @@ export default function ExpenseTracker() {
     return new Date(d.getFullYear(), d.getMonth(), 1);
   });
   const [tab, setTab] = useState("overview");
+  const [journalFilter, setJournalFilter] = useState("all"); // "all" | "cash"
 
   const [entryType, setEntryType] = useState("expense");
   const [desc, setDesc] = useState("");
@@ -217,7 +218,7 @@ export default function ExpenseTracker() {
 
   const currentKey = monthKey(current);
   const monthExpenses = useMemo(
-    () => expenses.filter((e) => e.date.slice(0, 7) === currentKey),
+    () => expenses.filter((e) => e.date.slice(0, 7) === currentKey && !e.excludeFromMonth),
     [expenses, currentKey]
   );
   const monthIncomes = useMemo(
@@ -644,6 +645,9 @@ export default function ExpenseTracker() {
   const changeTripCategory = (expenseId, newTripCategory) => {
     setExpenses((prev) => prev.map((e) => (e.id === expenseId ? { ...e, tripCategory: newTripCategory } : e)));
   };
+  const toggleTripExpenseCount = (expenseId, countInMonth) => {
+    setExpenses((prev) => prev.map((e) => (e.id === expenseId ? { ...e, excludeFromMonth: !countInMonth } : e)));
+  };
   const addTripExpense = (tripId) => {
     const num = parseFloat(String(tripAddDraft.amount).replace(",", "."));
     if (!tripAddDraft.description.trim() || !Number.isFinite(num) || num <= 0 || !tripAddDraft.date) return;
@@ -652,6 +656,7 @@ export default function ExpenseTracker() {
       id: uid(), description: tripAddDraft.description.trim(), amount: round2(num), date: tripAddDraft.date,
       category: mainCategory, subcategory: firstSubcat(mainCategory),
       tripId, tripCategory: tripAddDraft.tripCategory,
+      excludeFromMonth: true, // par défaut, une dépense de voyage ajoutée ici ne compte pas dans le mois
     }]);
     setTripAddDraft({ description: "", amount: "", date: todayISO(), tripCategory: "Autre" });
   };
@@ -796,9 +801,6 @@ export default function ExpenseTracker() {
           <button className={`tab-btn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>
             <LayoutGrid size={15} /> Vue d'ensemble
           </button>
-          <button className={`tab-btn ${tab === "cash" ? "active" : ""}`} onClick={() => setTab("cash")}>
-            <Banknote size={15} /> Espèces
-          </button>
           <button className={`tab-btn ${tab === "stats" ? "active" : ""}`} onClick={() => setTab("stats")}>
             <BarChart3 size={15} /> Statistiques
           </button>
@@ -807,30 +809,6 @@ export default function ExpenseTracker() {
         {tab === "quickadd" && (
           <div className="max-w-md mx-auto rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
             {renderAddForm("Ajout rapide")}
-          </div>
-        )}
-
-        {tab === "cash" && (
-          <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
-            <div className="flex items-center justify-between mb-1">
-              <h2 className="fx-display text-lg font-medium">Journal en espèces</h2>
-              <span className="fx-mono text-sm" style={{ color: "var(--coral)" }}>{fmt(cashTotal)}</span>
-            </div>
-            <p className="text-xs mb-4" style={{ opacity: 0.55 }}>{monthLabel(current)} — dépenses et revenus cochés « Payé en espèces »</p>
-            {cashLedger.length === 0 ? (
-              <p className="text-sm py-6 text-center" style={{ opacity: 0.5 }}>Aucune écriture en espèces ce mois-ci.</p>
-            ) : (
-              <div className="flex flex-col gap-5">
-                {cashLedger.map(([d, items]) => (
-                  <div key={d}>
-                    <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--sage)", letterSpacing: "0.08em" }}>{dayLabel(d)}</p>
-                    <div className="flex flex-col gap-1.5">
-                      {items.map((e) => renderTxRow(e, e.type))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         )}
 
@@ -1002,17 +980,29 @@ export default function ExpenseTracker() {
             </div>
 
             <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="fx-display text-lg font-medium">Journal du mois</h2>
+              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <h2 className="fx-display text-lg font-medium">
+                  {journalFilter === "cash" ? "Journal en espèces" : "Journal du mois"}
+                </h2>
                 <span className="text-xs" style={{ opacity: 0.5 }}>
                   {saveState === "saving" ? "Enregistrement…" : saveState === "error" ? "Erreur d'enregistrement" : loaded ? "Enregistré" : ""}
                 </span>
               </div>
-              {ledger.length === 0 ? (
-                <p className="text-sm py-6 text-center" style={{ opacity: 0.5 }}>Aucune écriture ce mois-ci. Ajoutez une dépense ou un revenu ci-dessus.</p>
+              <button onClick={() => setJournalFilter(journalFilter === "cash" ? "all" : "cash")}
+                className="flex items-center gap-1.5 mb-4 px-3 py-1.5 rounded-lg text-sm font-medium"
+                style={{ background: journalFilter === "cash" ? "var(--petrol)" : "rgba(0,0,0,0.05)", color: journalFilter === "cash" ? "#fff" : "var(--ink)" }}>
+                <Banknote size={14} /> {journalFilter === "cash" ? "Voir tout le journal" : "Voir le journal en espèces"}
+                {journalFilter !== "cash" && cashTotal > 0 && (
+                  <span className="fx-mono text-xs" style={{ opacity: 0.6 }}>({fmt(cashTotal)})</span>
+                )}
+              </button>
+              {(journalFilter === "cash" ? cashLedger : ledger).length === 0 ? (
+                <p className="text-sm py-6 text-center" style={{ opacity: 0.5 }}>
+                  {journalFilter === "cash" ? "Aucune écriture en espèces ce mois-ci." : "Aucune écriture ce mois-ci. Ajoutez une dépense ou un revenu ci-dessus."}
+                </p>
               ) : (
                 <div className="flex flex-col gap-5">
-                  {ledger.map(([d, items]) => (
+                  {(journalFilter === "cash" ? cashLedger : ledger).map(([d, items]) => (
                     <div key={d}>
                       <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--sage)", letterSpacing: "0.08em" }}>{dayLabel(d)}</p>
                       <div className="flex flex-col gap-1.5">
@@ -1521,6 +1511,8 @@ export default function ExpenseTracker() {
                                 <p className="text-xs py-1" style={{ opacity: 0.5 }}>Aucune dépense dans ce voyage pour l'instant.</p>
                               ) : (
                                 t.items.map((e) => {
+                                  const isEditingThis = editingEntry && editingEntry.id === e.id && editingEntry.type === "expense";
+                                  if (isEditingThis) return renderTxRow(e, "expense");
                                   const c = CAT_MAP[e.category] || FALLBACK_CAT;
                                   const Icon = c.icon;
                                   return (
@@ -1529,13 +1521,21 @@ export default function ExpenseTracker() {
                                         <Icon size={11} color="#fff" />
                                       </span>
                                       <span className="fx-mono shrink-0 text-xs" style={{ opacity: 0.5, width: "32px" }}>{e.date.slice(8, 10)}/{e.date.slice(5, 7)}</span>
-                                      <span className="shrink-0 max-w-[26%] truncate">{e.description}</span>
+                                      <span className="shrink-0 max-w-[22%] truncate">{e.description}</span>
                                       <select value={e.tripCategory || "Autre"} onChange={(ev) => changeTripCategory(e.id, ev.target.value)}
                                         style={{ width: "auto", padding: "2px 6px", fontSize: "12px" }}>
                                         {TRIP_CATEGORIES.map((tc) => <option key={tc} value={tc}>{tc}</option>)}
                                       </select>
+                                      <label className="flex items-center gap-1 shrink-0 text-xs" style={{ opacity: 0.55 }} title="Compter cette dépense dans le budget du mois">
+                                        <input type="checkbox" checked={!e.excludeFromMonth} onChange={(ev) => toggleTripExpenseCount(e.id, ev.target.checked)} style={{ width: "auto" }} />
+                                        Mois
+                                      </label>
                                       <span className="dots" />
                                       <span className="fx-mono text-sm shrink-0">{fmt(e.amount)}</span>
+                                      <button onClick={() => startEditEntry(e, "expense")} aria-label="Modifier" title="Modifier"
+                                        className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
+                                        <Pencil size={12} style={{ color: "var(--petrol)" }} />
+                                      </button>
                                       <button onClick={() => removeExpenseFromTrip(e.id)} aria-label="Retirer du voyage" title="Retirer du voyage"
                                         className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
                                         <X size={13} style={{ color: "var(--ink)" }} />
