@@ -657,18 +657,34 @@ export default function ExpenseTracker() {
   };
   const deleteTrip = (tripId) => {
     setTrips((prev) => prev.filter((t) => t.id !== tripId));
-    setExpenses((prev) => prev.map((e) => (e.tripId === tripId ? { ...e, tripId: null, tripCategory: null } : e)));
+    setExpenses((prev) => prev.map((e) => {
+      if (e.tripId !== tripId) return e;
+      const restored = e.originalCategory
+        ? { category: e.originalCategory, subcategory: e.originalSubcategory || "" }
+        : {};
+      return { ...e, ...restored, tripId: null, tripCategory: null, originalCategory: null, originalSubcategory: null };
+    }));
     if (expandedTrip === tripId) setExpandedTrip(null);
   };
   const importExpenseToTrip = (tripId, expenseId) => {
     setExpenses((prev) => prev.map((e) => {
       if (e.id !== expenseId) return e;
       const tripCategory = MAIN_TO_TRIP_CAT[e.category] || "Autre";
-      return { ...e, tripId, tripCategory };
+      return {
+        ...e, tripId, tripCategory,
+        originalCategory: e.category, originalSubcategory: e.subcategory || "",
+        category: "voyage", subcategory: "",
+      };
     }));
   };
   const removeExpenseFromTrip = (expenseId) => {
-    setExpenses((prev) => prev.map((e) => (e.id === expenseId ? { ...e, tripId: null, tripCategory: null } : e)));
+    setExpenses((prev) => prev.map((e) => {
+      if (e.id !== expenseId) return e;
+      const restored = e.originalCategory
+        ? { category: e.originalCategory, subcategory: e.originalSubcategory || "" }
+        : {};
+      return { ...e, ...restored, tripId: null, tripCategory: null, originalCategory: null, originalSubcategory: null };
+    }));
   };
   const changeTripCategory = (expenseId, newTripCategory) => {
     setExpenses((prev) => prev.map((e) => (e.id === expenseId ? { ...e, tripCategory: newTripCategory } : e)));
@@ -679,11 +695,11 @@ export default function ExpenseTracker() {
   const addTripExpense = (tripId) => {
     const num = parseFloat(String(tripAddDraft.amount).replace(",", "."));
     if (!tripAddDraft.description.trim() || !Number.isFinite(num) || num <= 0 || !tripAddDraft.date) return;
-    const mainCategory = TRIP_CAT_TO_MAIN[tripAddDraft.tripCategory] || "autres";
     setExpenses((prev) => [...prev, {
       id: uid(), description: tripAddDraft.description.trim(), amount: round2(num), date: tripAddDraft.date,
-      category: mainCategory, subcategory: firstSubcat(mainCategory),
+      category: "voyage", subcategory: "",
       tripId, tripCategory: tripAddDraft.tripCategory,
+      originalCategory: null, originalSubcategory: null,
       excludeFromMonth: true, // par défaut, une dépense de voyage ajoutée ici ne compte pas dans le mois
     }]);
     setTripAddDraft({ description: "", amount: "", date: todayISO(), tripCategory: "Autre" });
