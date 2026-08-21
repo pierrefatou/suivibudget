@@ -4,6 +4,7 @@ import {
   MoreHorizontal, Plus, Trash2, ChevronLeft, ChevronRight, TrendingUp,
   TrendingDown, PiggyBank, Pencil, Check, Landmark, Wallet, Target,
   LayoutGrid, BarChart3, KeyRound, Copy, Receipt, X, ChevronDown, Plane,
+  Maximize2, Banknote, PenSquare,
 } from "lucide-react";
 import {
   BarChart as ReBarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -77,6 +78,16 @@ const TRIP_CAT_TO_MAIN = { Restaurant: "alimentation", Logement: "logement", "D�
 // Catégorie de voyage suggérée par défaut à l'import d'une dépense existante
 const MAIN_TO_TRIP_CAT = { alimentation: "Restaurant", logement: "Logement", transport: "Déplacement", loisirs: "Activités", voyage: "Activités", ndf: "Logement", sante: "Autre", abonnements: "Autre", autres: "Autre" };
 
+const CHART_TITLES = {
+  donut: "Répartition des dépenses par catégorie",
+  "revenus-depenses": "Revenus vs dépenses",
+  "dep-mensuelles": "Évolution des dépenses mensuelles",
+  "dep-categorie": "Évolution des dépenses par catégorie",
+  "rev-categorie": "Évolution des revenus par catégorie",
+  epargne: "Évolution de l'épargne",
+};
+const PERIOD_CHART_IDS = ["revenus-depenses", "dep-mensuelles", "dep-categorie", "rev-categorie", "epargne"];
+
 export default function ExpenseTracker() {
   const [expenses, setExpenses] = useState([]);
   const [incomes, setIncomes] = useState([]);
@@ -98,8 +109,9 @@ export default function ExpenseTracker() {
   const [subcat, setSubcat] = useState(firstSubcat("alimentation"));
   const [incCat, setIncCat] = useState("salaires");
   const [date, setDate] = useState(todayISO());
+  const [isCash, setIsCash] = useState(false);
   const [editingEntry, setEditingEntry] = useState(null); // { id, type } | null
-  const [editDraft, setEditDraft] = useState({ description: "", amount: "", date: "", category: "", subcategory: "" });
+  const [editDraft, setEditDraft] = useState({ description: "", amount: "", date: "", category: "", subcategory: "", isCash: false });
 
   const [syncKey] = useState(() => getSyncKey());
   const [editingKey, setEditingKey] = useState(false);
@@ -372,6 +384,36 @@ export default function ExpenseTracker() {
     });
   }, [expenses, allMonths]);
 
+  // --- Évolution des revenus par catégorie, mois par mois (historique complet) ---
+  const incomeMonthlyData = useMemo(() => {
+    return allMonths.map((key) => {
+      const [y, m] = key.split("-");
+      const label = new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
+      const monthInc = incomes.filter((e) => e.date.slice(0, 7) === key);
+      const row = { key, label };
+      INCOME_CATEGORIES.forEach((c) => {
+        row[c.key] = round2(monthInc.filter((e) => e.category === c.key).reduce((s, e) => s + e.amount, 0));
+      });
+      return row;
+    });
+  }, [incomes, allMonths]);
+
+  // --- Période affichée dans les graphiques d'évolution (ajustable, notamment en plein écran) ---
+  const [evolutionPeriod, setEvolutionPeriod] = useState(6); // 3 | 6 | 12 | "all"
+  const periodFilteredMonths = useMemo(
+    () => (evolutionPeriod === "all" ? allMonthsData : allMonthsData.slice(-evolutionPeriod)),
+    [allMonthsData, evolutionPeriod]
+  );
+  const periodFilteredCategoryMonthly = useMemo(
+    () => (evolutionPeriod === "all" ? categoryMonthlyData : categoryMonthlyData.slice(-evolutionPeriod)),
+    [categoryMonthlyData, evolutionPeriod]
+  );
+  const periodFilteredIncomeMonthly = useMemo(
+    () => (evolutionPeriod === "all" ? incomeMonthlyData : incomeMonthlyData.slice(-evolutionPeriod)),
+    [incomeMonthlyData, evolutionPeriod]
+  );
+  const [fullscreenChart, setFullscreenChart] = useState(null);
+
   // --- Voyages : totaux et répartition par sous-catégorie de voyage ---
   const tripsWithTotals = useMemo(() => {
     return trips
@@ -407,6 +449,23 @@ export default function ExpenseTracker() {
     return Object.entries(map).sort((a, b) => (a[0] < b[0] ? 1 : -1));
   }, [monthExpenses, monthIncomes]);
 
+  const cashLedger = useMemo(() => {
+    const items = [
+      ...monthExpenses.filter((e) => e.isCash).map((e) => ({ ...e, type: "expense" })),
+      ...monthIncomes.filter((e) => e.isCash).map((e) => ({ ...e, type: "income" })),
+    ];
+    const map = {};
+    items.forEach((e) => {
+      map[e.date] = map[e.date] || [];
+      map[e.date].push(e);
+    });
+    return Object.entries(map).sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  }, [monthExpenses, monthIncomes]);
+  const cashTotal = useMemo(
+    () => monthExpenses.filter((e) => e.isCash).reduce((s, e) => s + e.amount, 0),
+    [monthExpenses]
+  );
+
   const goMonth = (d) => setCurrent(new Date(current.getFullYear(), current.getMonth() + d, 1));
 
   const handleCatChange = (newCat) => {
@@ -419,12 +478,13 @@ export default function ExpenseTracker() {
     const num = parseFloat(String(amount).replace(",", "."));
     if (!desc.trim() || !Number.isFinite(num) || num <= 0) return;
     if (entryType === "expense") {
-      setExpenses((prev) => [...prev, { id: uid(), description: desc.trim(), amount: round2(num), category: cat, subcategory: subcat, date }]);
+      setExpenses((prev) => [...prev, { id: uid(), description: desc.trim(), amount: round2(num), category: cat, subcategory: subcat, date, isCash }]);
     } else {
-      setIncomes((prev) => [...prev, { id: uid(), description: desc.trim(), amount: round2(num), category: incCat, date }]);
+      setIncomes((prev) => [...prev, { id: uid(), description: desc.trim(), amount: round2(num), category: incCat, date, isCash }]);
     }
     setDesc("");
     setAmount("");
+    setIsCash(false);
   };
 
   // --- Édition inline (directement sur la ligne cliquée, pas dans le formulaire du haut) ---
@@ -436,6 +496,7 @@ export default function ExpenseTracker() {
       date: e.date,
       category: e.category,
       subcategory: type === "expense" ? (e.subcategory || firstSubcat(e.category)) : "",
+      isCash: !!e.isCash,
     });
   };
 
@@ -447,11 +508,11 @@ export default function ExpenseTracker() {
     const { id, type } = editingEntry;
     if (type === "expense") {
       setExpenses((prev) => prev.map((x) => x.id === id
-        ? { ...x, description: editDraft.description.trim(), amount: round2(num), category: editDraft.category, subcategory: editDraft.subcategory, date: editDraft.date }
+        ? { ...x, description: editDraft.description.trim(), amount: round2(num), category: editDraft.category, subcategory: editDraft.subcategory, date: editDraft.date, isCash: editDraft.isCash }
         : x));
     } else {
       setIncomes((prev) => prev.map((x) => x.id === id
-        ? { ...x, description: editDraft.description.trim(), amount: round2(num), category: editDraft.category, date: editDraft.date }
+        ? { ...x, description: editDraft.description.trim(), amount: round2(num), category: editDraft.category, date: editDraft.date, isCash: editDraft.isCash }
         : x));
     }
     setEditingEntry(null);
@@ -498,6 +559,10 @@ export default function ExpenseTracker() {
               {INCOME_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
             </select>
           )}
+          <label className="flex items-center gap-1.5 text-sm" style={{ opacity: 0.75 }}>
+            <input type="checkbox" checked={!!editDraft.isCash} onChange={(ev) => setEditDraft((d) => ({ ...d, isCash: ev.target.checked }))} style={{ width: "auto" }} />
+            Payé en espèces
+          </label>
           <div className="flex gap-2 mt-1">
             <button onClick={saveInlineEdit} className="flex-1 flex items-center justify-center gap-1.5 rounded-md py-1.5 text-sm font-medium" style={{ background: "var(--petrol)", color: "#fff" }}>
               <Check size={14} /> Enregistrer
@@ -520,6 +585,7 @@ export default function ExpenseTracker() {
           {e.description}
           {e.subcategory ? <span style={{ opacity: 0.5 }}> · {e.subcategory}</span> : null}
         </span>
+        {e.isCash && <Banknote size={13} className="shrink-0" style={{ color: "var(--gold)" }} />}
         <span className="dots" />
         <span className="fx-mono text-sm shrink-0" style={{ color: type === "income" ? "var(--sage)" : "var(--ink)" }}>
           {type === "income" ? "+" : "-"}{fmt(e.amount)}
@@ -591,6 +657,53 @@ export default function ExpenseTracker() {
   };
 
   const hasSubcats = CAT_MAP[cat] && CAT_MAP[cat].subcategories.length > 0;
+
+  const renderAddForm = (title = "Nouvelle écriture") => (
+    <>
+      <h2 className="fx-display text-lg font-medium mb-3">{title}</h2>
+      <div className="flex gap-1 mb-3 rounded-lg" style={{ background: "rgba(0,0,0,0.04)", padding: "3px" }}>
+        <button type="button" onClick={() => setEntryType("expense")} className="flex-1 text-sm py-1.5 rounded-md font-medium"
+          style={{ background: entryType === "expense" ? "var(--card)" : "transparent", color: entryType === "expense" ? "var(--coral)" : "var(--ink)", opacity: entryType === "expense" ? 1 : 0.6, boxShadow: entryType === "expense" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
+          Dépense
+        </button>
+        <button type="button" onClick={() => setEntryType("income")} className="flex-1 text-sm py-1.5 rounded-md font-medium"
+          style={{ background: entryType === "income" ? "var(--card)" : "transparent", color: entryType === "income" ? "var(--sage)" : "var(--ink)", opacity: entryType === "income" ? 1 : 0.6, boxShadow: entryType === "income" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
+          Revenu
+        </button>
+      </div>
+      <form onSubmit={addEntry} className="flex flex-col gap-2.5">
+        <input type="text" placeholder={entryType === "expense" ? "Description (ex. Courses Monoprix)" : "Description (ex. Salaire août)"} value={desc} onChange={(e) => setDesc(e.target.value)} />
+        <div className="flex gap-2">
+          <input type="number" step="0.01" min="0" placeholder="Montant" value={amount} onChange={(e) => setAmount(e.target.value)} style={{ width: "45%" }} />
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ width: "55%" }} />
+        </div>
+        {entryType === "expense" ? (
+          <>
+            <select value={cat} onChange={(e) => handleCatChange(e.target.value)}>
+              {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+            {hasSubcats && (
+              <select value={subcat} onChange={(e) => setSubcat(e.target.value)}>
+                {CAT_MAP[cat].subcategories.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            )}
+          </>
+        ) : (
+          <select value={incCat} onChange={(e) => setIncCat(e.target.value)}>
+            {INCOME_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+          </select>
+        )}
+        <label className="flex items-center gap-1.5 text-sm" style={{ opacity: 0.75 }}>
+          <input type="checkbox" checked={isCash} onChange={(e) => setIsCash(e.target.checked)} style={{ width: "auto" }} />
+          Payé en espèces
+        </label>
+        <button type="submit" className="flex items-center justify-center gap-1.5 rounded-lg py-2.5 mt-1 text-sm font-medium"
+          style={{ background: entryType === "expense" ? "var(--petrol)" : "var(--sage)", color: "#fff" }}>
+          <Plus size={16} /> Ajouter
+        </button>
+      </form>
+    </>
+  );
 
   return (
     <div className="min-h-screen w-full" style={{ background: "var(--paper)", color: "var(--ink)", fontFamily: "var(--font-body)" }}>
@@ -676,14 +789,50 @@ export default function ExpenseTracker() {
           )}
         </div>
 
-        <div className="flex items-center gap-1 mb-6 rounded-lg w-fit" style={{ background: "rgba(0,0,0,0.04)", padding: "4px" }}>
+        <div className="flex items-center gap-1 mb-6 rounded-lg w-fit" style={{ background: "rgba(0,0,0,0.04)", padding: "4px", flexWrap: "wrap" }}>
+          <button className={`tab-btn ${tab === "quickadd" ? "active" : ""}`} onClick={() => setTab("quickadd")}>
+            <PenSquare size={15} /> Ajout rapide
+          </button>
           <button className={`tab-btn ${tab === "overview" ? "active" : ""}`} onClick={() => setTab("overview")}>
             <LayoutGrid size={15} /> Vue d'ensemble
+          </button>
+          <button className={`tab-btn ${tab === "cash" ? "active" : ""}`} onClick={() => setTab("cash")}>
+            <Banknote size={15} /> Espèces
           </button>
           <button className={`tab-btn ${tab === "stats" ? "active" : ""}`} onClick={() => setTab("stats")}>
             <BarChart3 size={15} /> Statistiques
           </button>
         </div>
+
+        {tab === "quickadd" && (
+          <div className="max-w-md mx-auto rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
+            {renderAddForm("Ajout rapide")}
+          </div>
+        )}
+
+        {tab === "cash" && (
+          <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="fx-display text-lg font-medium">Journal en espèces</h2>
+              <span className="fx-mono text-sm" style={{ color: "var(--coral)" }}>{fmt(cashTotal)}</span>
+            </div>
+            <p className="text-xs mb-4" style={{ opacity: 0.55 }}>{monthLabel(current)} — dépenses et revenus cochés « Payé en espèces »</p>
+            {cashLedger.length === 0 ? (
+              <p className="text-sm py-6 text-center" style={{ opacity: 0.5 }}>Aucune écriture en espèces ce mois-ci.</p>
+            ) : (
+              <div className="flex flex-col gap-5">
+                {cashLedger.map(([d, items]) => (
+                  <div key={d}>
+                    <p className="text-xs uppercase tracking-wide mb-2" style={{ color: "var(--sage)", letterSpacing: "0.08em" }}>{dayLabel(d)}</p>
+                    <div className="flex flex-col gap-1.5">
+                      {items.map((e) => renderTxRow(e, e.type))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {tab === "overview" && (
           <>
@@ -848,44 +997,7 @@ export default function ExpenseTracker() {
               </div>
 
               <div className="md:col-span-2 rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
-                <h2 className="fx-display text-lg font-medium mb-3">Nouvelle écriture</h2>
-                <div className="flex gap-1 mb-3 rounded-lg" style={{ background: "rgba(0,0,0,0.04)", padding: "3px" }}>
-                  <button type="button" onClick={() => setEntryType("expense")} className="flex-1 text-sm py-1.5 rounded-md font-medium"
-                    style={{ background: entryType === "expense" ? "var(--card)" : "transparent", color: entryType === "expense" ? "var(--coral)" : "var(--ink)", opacity: entryType === "expense" ? 1 : 0.6, boxShadow: entryType === "expense" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
-                    Dépense
-                  </button>
-                  <button type="button" onClick={() => setEntryType("income")} className="flex-1 text-sm py-1.5 rounded-md font-medium"
-                    style={{ background: entryType === "income" ? "var(--card)" : "transparent", color: entryType === "income" ? "var(--sage)" : "var(--ink)", opacity: entryType === "income" ? 1 : 0.6, boxShadow: entryType === "income" ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
-                    Revenu
-                  </button>
-                </div>
-                <form onSubmit={addEntry} className="flex flex-col gap-2.5">
-                  <input type="text" placeholder={entryType === "expense" ? "Description (ex. Courses Monoprix)" : "Description (ex. Salaire août)"} value={desc} onChange={(e) => setDesc(e.target.value)} />
-                  <div className="flex gap-2">
-                    <input type="number" step="0.01" min="0" placeholder="Montant" value={amount} onChange={(e) => setAmount(e.target.value)} style={{ width: "45%" }} />
-                    <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ width: "55%" }} />
-                  </div>
-                  {entryType === "expense" ? (
-                    <>
-                      <select value={cat} onChange={(e) => handleCatChange(e.target.value)}>
-                        {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-                      </select>
-                      {hasSubcats && (
-                        <select value={subcat} onChange={(e) => setSubcat(e.target.value)}>
-                          {CAT_MAP[cat].subcategories.map((s) => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                      )}
-                    </>
-                  ) : (
-                    <select value={incCat} onChange={(e) => setIncCat(e.target.value)}>
-                      {INCOME_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-                    </select>
-                  )}
-                  <button type="submit" className="flex items-center justify-center gap-1.5 rounded-lg py-2.5 mt-1 text-sm font-medium"
-                    style={{ background: entryType === "expense" ? "var(--petrol)" : "var(--sage)", color: "#fff" }}>
-                    <Plus size={16} /> Ajouter
-                  </button>
-                </form>
+                {renderAddForm()}
               </div>
             </div>
 
@@ -971,7 +1083,12 @@ export default function ExpenseTracker() {
 
             {/* Répartition par catégorie (donut, mois en cours) */}
             <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
-              <h2 className="fx-display text-lg font-medium mb-1">Répartition des dépenses par catégorie</h2>
+              <div className="flex items-start justify-between mb-1">
+                <h2 className="fx-display text-lg font-medium">Répartition des dépenses par catégorie</h2>
+                <button onClick={() => setFullscreenChart("donut")} aria-label="Plein écran" className="shrink-0 p-1 opacity-40 hover:opacity-90 transition-opacity">
+                  <Maximize2 size={15} />
+                </button>
+              </div>
               <p className="text-xs mb-4" style={{ opacity: 0.55 }}>Mois en cours</p>
               {pieData.length === 0 ? (
                 <p className="text-sm py-6 text-center" style={{ opacity: 0.5 }}>Aucune dépense ce mois-ci.</p>
@@ -1074,10 +1191,15 @@ export default function ExpenseTracker() {
 
 
             <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
-              <h2 className="fx-display text-lg font-medium mb-4">Revenus vs dépenses</h2>
+              <div className="flex items-start justify-between mb-4">
+                <h2 className="fx-display text-lg font-medium">Revenus vs dépenses</h2>
+                <button onClick={() => setFullscreenChart("revenus-depenses")} aria-label="Plein écran" className="shrink-0 p-1 opacity-40 hover:opacity-90 transition-opacity">
+                  <Maximize2 size={15} />
+                </button>
+              </div>
               <div style={{ height: 220 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <ReBarChart data={statsData} margin={{ top: 4, right: 4, left: -14, bottom: 0 }}>
+                  <ReBarChart data={periodFilteredMonths} margin={{ top: 4, right: 4, left: -14, bottom: 0 }}>
                     <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
                     <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--ink)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
                     <YAxis tick={{ fontSize: 10, fill: "var(--ink)" }} axisLine={false} tickLine={false} width={40} />
@@ -1137,14 +1259,19 @@ export default function ExpenseTracker() {
 
             {/* Évolution des dépenses mensuelles (historique complet) */}
             <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
-              <h2 className="fx-display text-lg font-medium mb-1">Évolution des dépenses mensuelles</h2>
+              <div className="flex items-start justify-between mb-1">
+                <h2 className="fx-display text-lg font-medium">Évolution des dépenses mensuelles</h2>
+                <button onClick={() => setFullscreenChart("dep-mensuelles")} aria-label="Plein écran" className="shrink-0 p-1 opacity-40 hover:opacity-90 transition-opacity">
+                  <Maximize2 size={15} />
+                </button>
+              </div>
               <p className="text-xs mb-4" style={{ opacity: 0.55 }}>Depuis votre première écriture</p>
-              {allMonthsData.length === 0 ? (
+              {periodFilteredMonths.length === 0 ? (
                 <p className="text-sm py-6 text-center" style={{ opacity: 0.5 }}>Pas encore assez de données.</p>
               ) : (
                 <div style={{ height: 220 }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={allMonthsData} margin={{ top: 4, right: 4, left: -14, bottom: 0 }}>
+                    <AreaChart data={periodFilteredMonths} margin={{ top: 4, right: 4, left: -14, bottom: 0 }}>
                       <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
                       <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--ink)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
                       <YAxis tick={{ fontSize: 10, fill: "var(--ink)" }} axisLine={false} tickLine={false} width={40} />
@@ -1158,14 +1285,19 @@ export default function ExpenseTracker() {
 
             {/* Évolution des dépenses par catégorie (historique complet, barres empilées) */}
             <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
-              <h2 className="fx-display text-lg font-medium mb-1">Évolution des dépenses par catégorie</h2>
+              <div className="flex items-start justify-between mb-1">
+                <h2 className="fx-display text-lg font-medium">Évolution des dépenses par catégorie</h2>
+                <button onClick={() => setFullscreenChart("dep-categorie")} aria-label="Plein écran" className="shrink-0 p-1 opacity-40 hover:opacity-90 transition-opacity">
+                  <Maximize2 size={15} />
+                </button>
+              </div>
               <p className="text-xs mb-4" style={{ opacity: 0.55 }}>Depuis votre première écriture</p>
-              {categoryMonthlyData.length === 0 ? (
+              {periodFilteredCategoryMonthly.length === 0 ? (
                 <p className="text-sm py-6 text-center" style={{ opacity: 0.5 }}>Pas encore assez de données.</p>
               ) : (
                 <div style={{ height: 260 }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <ReBarChart data={categoryMonthlyData} margin={{ top: 4, right: 4, left: -14, bottom: 0 }}>
+                    <ReBarChart data={periodFilteredCategoryMonthly} margin={{ top: 4, right: 4, left: -14, bottom: 0 }}>
                       <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
                       <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--ink)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
                       <YAxis tick={{ fontSize: 10, fill: "var(--ink)" }} axisLine={false} tickLine={false} width={40} />
@@ -1180,21 +1312,55 @@ export default function ExpenseTracker() {
               )}
             </div>
 
+            {/* Évolution des revenus par catégorie (historique complet, barres empilées) */}
+            <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
+              <div className="flex items-start justify-between mb-1">
+                <h2 className="fx-display text-lg font-medium">Évolution des revenus par catégorie</h2>
+                <button onClick={() => setFullscreenChart("rev-categorie")} aria-label="Plein écran" className="shrink-0 p-1 opacity-40 hover:opacity-90 transition-opacity">
+                  <Maximize2 size={15} />
+                </button>
+              </div>
+              <p className="text-xs mb-4" style={{ opacity: 0.55 }}>Fixe / Variable / NDF / Autres — depuis votre première écriture</p>
+              {periodFilteredIncomeMonthly.length === 0 ? (
+                <p className="text-sm py-6 text-center" style={{ opacity: 0.5 }}>Pas encore assez de données.</p>
+              ) : (
+                <div style={{ height: 260 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ReBarChart data={periodFilteredIncomeMonthly} margin={{ top: 4, right: 4, left: -14, bottom: 0 }}>
+                      <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
+                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--ink)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
+                      <YAxis tick={{ fontSize: 10, fill: "var(--ink)" }} axisLine={false} tickLine={false} width={40} />
+                      <Tooltip formatter={(v) => fmt(v)} contentStyle={{ fontFamily: "IBM Plex Sans", fontSize: 12, borderRadius: 8, border: "1px solid var(--line)" }} />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      {INCOME_CATEGORIES.map((c) => (
+                        <Bar key={c.key} dataKey={c.key} name={c.label} stackId="inc" fill={c.color} radius={[0, 0, 0, 0]} />
+                      ))}
+                    </ReBarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+
             {/* Évolution de l'épargne (historique complet, barres + cumul) */}
             <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
-              <h2 className="fx-display text-lg font-medium mb-1">Évolution de l'épargne</h2>
+              <div className="flex items-start justify-between mb-1">
+                <h2 className="fx-display text-lg font-medium">Évolution de l'épargne</h2>
+                <button onClick={() => setFullscreenChart("epargne")} aria-label="Plein écran" className="shrink-0 p-1 opacity-40 hover:opacity-90 transition-opacity">
+                  <Maximize2 size={15} />
+                </button>
+              </div>
               <p className="text-xs mb-4" style={{ opacity: 0.55 }}>
                 Barres = épargne du mois · ligne = épargne cumulée · pointillés = objectif de {fmt(savingsGoal)}
                 {bestMonth && worstMonth && bestMonth.key !== worstMonth.key && (
                   <> · meilleur mois (6 derniers) : {bestMonth.label} · plus faible : {worstMonth.label}</>
                 )}
               </p>
-              {allMonthsData.length === 0 ? (
+              {periodFilteredMonths.length === 0 ? (
                 <p className="text-sm py-6 text-center" style={{ opacity: 0.5 }}>Pas encore assez de données.</p>
               ) : (
                 <div style={{ height: 240 }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={allMonthsData} margin={{ top: 4, right: 4, left: -14, bottom: 0 }}>
+                    <ComposedChart data={periodFilteredMonths} margin={{ top: 4, right: 4, left: -14, bottom: 0 }}>
                       <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
                       <XAxis dataKey="label" tick={{ fontSize: 11, fill: "var(--ink)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
                       <YAxis tick={{ fontSize: 10, fill: "var(--ink)" }} axisLine={false} tickLine={false} width={40} />
@@ -1202,7 +1368,7 @@ export default function ExpenseTracker() {
                       <Legend wrapperStyle={{ fontSize: 12 }} />
                       <ReferenceLine y={savingsGoal} stroke="#B8901F" strokeDasharray="4 4" />
                       <Bar dataKey="savings" name="Épargne du mois" radius={[4, 4, 0, 0]}>
-                        {allMonthsData.map((d, i) => (
+                        {periodFilteredMonths.map((d, i) => (
                           <Cell key={i} fill={d.savings >= 0 ? "#4F7859" : "#C05A3D"} />
                         ))}
                       </Bar>
@@ -1475,6 +1641,142 @@ export default function ExpenseTracker() {
           Vos données sont enregistrées automatiquement et restent privées, propres à vous.
         </p>
       </div>
+
+      {fullscreenChart && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(22,36,31,0.65)" }}
+          onClick={() => setFullscreenChart(null)}>
+          <div className="rounded-xl p-6 w-full" style={{ background: "var(--card)", maxWidth: "900px", maxHeight: "88vh", overflowY: "auto" }}
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="fx-display text-xl font-medium">{CHART_TITLES[fullscreenChart]}</h2>
+              <button onClick={() => setFullscreenChart(null)} aria-label="Fermer" className="p-1.5 rounded-md hover:bg-black/5">
+                <X size={20} />
+              </button>
+            </div>
+
+            {PERIOD_CHART_IDS.includes(fullscreenChart) && (
+              <div className="flex gap-1 mb-5 rounded-lg w-fit" style={{ background: "rgba(0,0,0,0.04)", padding: "3px" }}>
+                {[3, 6, 12, "all"].map((p) => (
+                  <button key={p} onClick={() => setEvolutionPeriod(p)} className="px-3 py-1.5 text-sm rounded-md font-medium"
+                    style={{ background: evolutionPeriod === p ? "var(--card)" : "transparent", opacity: evolutionPeriod === p ? 1 : 0.6, boxShadow: evolutionPeriod === p ? "0 1px 2px rgba(0,0,0,0.08)" : "none" }}>
+                    {p === "all" ? "Tout" : `${p} mois`}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {fullscreenChart === "donut" && (
+              <div className="flex flex-col items-center gap-6">
+                <div style={{ width: 320, height: 320 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={90} outerRadius={150} paddingAngle={2}>
+                        {pieData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                      </Pie>
+                      <Tooltip formatter={(v) => fmt(v)} contentStyle={{ fontFamily: "IBM Plex Sans", fontSize: 13, borderRadius: 8, border: "1px solid var(--line)" }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="flex flex-col gap-2 w-full max-w-md">
+                  {pieData.map((d) => (
+                    <div key={d.key} className="ledger-row text-sm">
+                      <span className="w-3 h-3 rounded-full shrink-0" style={{ background: d.color }} />
+                      <span className="shrink-0">{d.name}</span>
+                      <span className="dots" />
+                      <span className="fx-mono shrink-0">{fmt(d.value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {fullscreenChart === "revenus-depenses" && (
+              <div style={{ height: 450 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <ReBarChart data={periodFilteredMonths} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
+                    <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
+                    <XAxis dataKey="label" tick={{ fontSize: 12, fill: "var(--ink)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: "var(--ink)" }} axisLine={false} tickLine={false} width={55} />
+                    <Tooltip formatter={(v) => fmt(v)} contentStyle={{ fontFamily: "IBM Plex Sans", fontSize: 13, borderRadius: 8, border: "1px solid var(--line)" }} />
+                    <Legend wrapperStyle={{ fontSize: 13 }} />
+                    <Bar dataKey="income" name="Revenus" fill="#4F7859" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="expense" name="Dépenses" fill="#C05A3D" radius={[4, 4, 0, 0]} />
+                  </ReBarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {fullscreenChart === "dep-mensuelles" && (
+              <div style={{ height: 450 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={periodFilteredMonths} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
+                    <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
+                    <XAxis dataKey="label" tick={{ fontSize: 12, fill: "var(--ink)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: "var(--ink)" }} axisLine={false} tickLine={false} width={55} />
+                    <Tooltip formatter={(v) => fmt(v)} contentStyle={{ fontFamily: "IBM Plex Sans", fontSize: 13, borderRadius: 8, border: "1px solid var(--line)" }} />
+                    <Area type="monotone" dataKey="expense" name="Dépenses" stroke="#C05A3D" fill="#C05A3D" fillOpacity={0.18} strokeWidth={2.5} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {fullscreenChart === "dep-categorie" && (
+              <div style={{ height: 450 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <ReBarChart data={periodFilteredCategoryMonthly} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
+                    <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
+                    <XAxis dataKey="label" tick={{ fontSize: 12, fill: "var(--ink)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: "var(--ink)" }} axisLine={false} tickLine={false} width={55} />
+                    <Tooltip formatter={(v) => fmt(v)} contentStyle={{ fontFamily: "IBM Plex Sans", fontSize: 13, borderRadius: 8, border: "1px solid var(--line)" }} />
+                    <Legend wrapperStyle={{ fontSize: 13 }} />
+                    {CATEGORIES.map((c) => (
+                      <Bar key={c.key} dataKey={c.key} name={c.label} stackId="cat" fill={c.color} radius={[0, 0, 0, 0]} />
+                    ))}
+                  </ReBarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {fullscreenChart === "rev-categorie" && (
+              <div style={{ height: 450 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <ReBarChart data={periodFilteredIncomeMonthly} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
+                    <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
+                    <XAxis dataKey="label" tick={{ fontSize: 12, fill: "var(--ink)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: "var(--ink)" }} axisLine={false} tickLine={false} width={55} />
+                    <Tooltip formatter={(v) => fmt(v)} contentStyle={{ fontFamily: "IBM Plex Sans", fontSize: 13, borderRadius: 8, border: "1px solid var(--line)" }} />
+                    <Legend wrapperStyle={{ fontSize: 13 }} />
+                    {INCOME_CATEGORIES.map((c) => (
+                      <Bar key={c.key} dataKey={c.key} name={c.label} stackId="inc" fill={c.color} radius={[0, 0, 0, 0]} />
+                    ))}
+                  </ReBarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {fullscreenChart === "epargne" && (
+              <div style={{ height: 450 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={periodFilteredMonths} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
+                    <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
+                    <XAxis dataKey="label" tick={{ fontSize: 12, fill: "var(--ink)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11, fill: "var(--ink)" }} axisLine={false} tickLine={false} width={55} />
+                    <Tooltip formatter={(v) => fmt(v)} contentStyle={{ fontFamily: "IBM Plex Sans", fontSize: 13, borderRadius: 8, border: "1px solid var(--line)" }} />
+                    <Legend wrapperStyle={{ fontSize: 13 }} />
+                    <ReferenceLine y={savingsGoal} stroke="#B8901F" strokeDasharray="4 4" />
+                    <Bar dataKey="savings" name="Épargne du mois" radius={[4, 4, 0, 0]}>
+                      {periodFilteredMonths.map((d, i) => (
+                        <Cell key={i} fill={d.savings >= 0 ? "#4F7859" : "#C05A3D"} />
+                      ))}
+                    </Bar>
+                    <Line type="monotone" dataKey="cumulative" name="Épargne cumulée" stroke="#1F3A3E" strokeWidth={2.5} dot={{ r: 4 }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
