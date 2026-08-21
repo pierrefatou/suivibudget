@@ -85,6 +85,7 @@ const CHART_TITLES = {
   "dep-categorie": "Évolution des dépenses par catégorie",
   "rev-categorie": "Évolution des revenus par catégorie",
   epargne: "Évolution de l'épargne",
+  patrimoine: "Évolution de mon épargne totale",
 };
 const PERIOD_CHART_IDS = ["revenus-depenses", "dep-mensuelles", "dep-categorie", "rev-categorie", "epargne"];
 
@@ -95,6 +96,8 @@ export default function ExpenseTracker() {
   const [savingsGoal, setSavingsGoal] = useState(300);
   const [salaryBreakdown, setSalaryBreakdown] = useState({}); // { "2026-07": { fixe, variable, ndf } }
   const [trips, setTrips] = useState([]); // [{ id, title, createdDate }]
+  const [savingsAccounts, setSavingsAccounts] = useState([]); // [{ id, name }]
+  const [savingsBalances, setSavingsBalances] = useState({}); // { "2026-08": { accId: "12749" } }
   const [loaded, setLoaded] = useState(false);
   const [current, setCurrent] = useState(() => {
     const d = new Date();
@@ -192,6 +195,8 @@ export default function ExpenseTracker() {
             setGoalDraft(String(s.savingsGoal));
           }
           if (s.salaryBreakdown) setSalaryBreakdown(s.salaryBreakdown);
+          if (s.savingsAccounts) setSavingsAccounts(s.savingsAccounts);
+          if (s.savingsBalances) setSavingsBalances(s.savingsBalances);
         }
       } catch (e) {}
       setLoaded(true);
@@ -207,14 +212,14 @@ export default function ExpenseTracker() {
         await storage.set("expenses", JSON.stringify(expenses));
         await storage.set("incomes", JSON.stringify(incomes));
         await storage.set("trips", JSON.stringify(trips));
-        await storage.set("settings", JSON.stringify({ catBudgets, savingsGoal, salaryBreakdown }));
+        await storage.set("settings", JSON.stringify({ catBudgets, savingsGoal, salaryBreakdown, savingsAccounts, savingsBalances }));
         setSaveState("saved");
       } catch (e) {
         setSaveState("error");
       }
     }, 400);
     return () => clearTimeout(saveTimer.current);
-  }, [expenses, incomes, trips, catBudgets, savingsGoal, salaryBreakdown, loaded]);
+  }, [expenses, incomes, trips, catBudgets, savingsGoal, salaryBreakdown, savingsAccounts, savingsBalances, loaded]);
 
   const currentKey = monthKey(current);
   const monthExpenses = useMemo(
@@ -351,6 +356,29 @@ export default function ExpenseTracker() {
   const txCount = monthExpenses.length;
   const avgTx = txCount > 0 ? totalExpense / txCount : 0;
   const maxTx = monthExpenses.reduce((m, e) => Math.max(m, e.amount), 0);
+
+  // --- Patrimoine / comptes d'épargne (saisie manuelle mensuelle) ---
+  const currentSavingsBalances = savingsBalances[currentKey] || {};
+  const savingsAccountsWithValues = useMemo(
+    () => savingsAccounts.map((a) => ({
+      ...a,
+      value: parseFloat(String(currentSavingsBalances[a.id] || "0").replace(",", ".")) || 0,
+    })),
+    [savingsAccounts, currentSavingsBalances]
+  );
+  const totalSavingsBalance = savingsAccountsWithValues.reduce((s, a) => s + a.value, 0);
+  const hasPrevMonthSavings = !!savingsBalances[prevKey] && Object.keys(savingsBalances[prevKey] || {}).length > 0;
+
+  const savingsEvolutionData = useMemo(() => {
+    const months = Object.keys(savingsBalances).sort();
+    return months.map((key) => {
+      const [y, m] = key.split("-");
+      const label = new Date(Number(y), Number(m) - 1, 1).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
+      const balances = savingsBalances[key] || {};
+      const total = savingsAccounts.reduce((s, a) => s + (parseFloat(String(balances[a.id] || "0").replace(",", ".")) || 0), 0);
+      return { key, label, total };
+    });
+  }, [savingsBalances, savingsAccounts]);
 
   // --- Historique complet (tous les mois ayant au moins une écriture) pour les graphiques d'évolution ---
   const allMonths = useMemo(() => {
@@ -662,6 +690,34 @@ export default function ExpenseTracker() {
   };
 
   const hasSubcats = CAT_MAP[cat] && CAT_MAP[cat].subcategories.length > 0;
+
+  // --- Comptes d'épargne / patrimoine ---
+  const [newAccountName, setNewAccountName] = useState("");
+  const addSavingsAccount = () => {
+    const name = newAccountName.trim();
+    if (!name) return;
+    setSavingsAccounts((prev) => [...prev, { id: uid(), name }]);
+    setNewAccountName("");
+  };
+  const removeSavingsAccount = (accountId) => {
+    setSavingsAccounts((prev) => prev.filter((a) => a.id !== accountId));
+    setSavingsBalances((prev) => {
+      const next = {};
+      Object.entries(prev).forEach(([mk, balances]) => {
+        const copy = { ...balances };
+        delete copy[accountId];
+        next[mk] = copy;
+      });
+      return next;
+    });
+  };
+  const updateSavingsBalance = (accountId, value) => {
+    setSavingsBalances((prev) => ({ ...prev, [currentKey]: { ...(prev[currentKey] || {}), [accountId]: value } }));
+  };
+  const copyPreviousMonthBalances = () => {
+    const prevBalances = savingsBalances[prevKey] || {};
+    setSavingsBalances((prev) => ({ ...prev, [currentKey]: { ...prevBalances } }));
+  };
 
   const renderAddForm = (title = "Nouvelle écriture") => (
     <>
@@ -1018,6 +1074,78 @@ export default function ExpenseTracker() {
 
         {tab === "stats" && (
           <div className="flex flex-col gap-6">
+            {/* Mon épargne (comptes, patrimoine) */}
+            <div className="rounded-xl p-5" style={{ background: "var(--card)", border: "1px solid var(--line)" }}>
+              <div className="flex items-start justify-between mb-1">
+                <h2 className="fx-display text-lg font-medium">Mon épargne</h2>
+                <button onClick={() => setFullscreenChart("patrimoine")} aria-label="Plein écran" className="shrink-0 p-1 opacity-40 hover:opacity-90 transition-opacity">
+                  <Maximize2 size={15} />
+                </button>
+              </div>
+              <p className="text-xs mb-4" style={{ opacity: 0.55 }}>{monthLabel(current)} — solde de chaque compte, à mettre à jour toi-même chaque mois</p>
+
+              <div className="rounded-lg px-4 py-3 mb-4" style={{ background: "rgba(79,120,89,0.1)" }}>
+                <p className="text-xs mb-1" style={{ opacity: 0.6 }}>Total épargné</p>
+                <p className="fx-mono text-2xl font-medium" style={{ color: "var(--sage)" }}>{fmt(totalSavingsBalance)}</p>
+              </div>
+
+              {savingsAccounts.length === 0 ? (
+                <p className="text-sm py-3 text-center" style={{ opacity: 0.5 }}>Ajoute un compte ci-dessous pour commencer (ex. Livret A, PEA...).</p>
+              ) : (
+                <div className="flex flex-col gap-2 mb-3">
+                  {savingsAccountsWithValues.map((a) => {
+                    const pct = totalSavingsBalance > 0 ? (a.value / totalSavingsBalance) * 100 : 0;
+                    return (
+                      <div key={a.id} className="cat-track" style={{ height: "34px" }}>
+                        <div className="cat-fill" style={{ width: `${pct}%`, background: "var(--petrol)" }} />
+                        <div className="relative h-full flex items-center px-3 gap-2 ledger-row group">
+                          <span className="text-sm shrink-0">{a.name}</span>
+                          <span className="dots" />
+                          <input type="number" step="0.01" placeholder="0"
+                            value={currentSavingsBalances[a.id] ?? ""}
+                            onChange={(e) => updateSavingsBalance(a.id, e.target.value)}
+                            style={{ width: "100px" }} className="fx-mono text-right" />
+                          <span className="text-xs shrink-0 opacity-45 w-9 text-right">{Math.round(pct)}%</span>
+                          <button onClick={() => removeSavingsAccount(a.id)} aria-label="Supprimer ce compte"
+                            className="shrink-0 opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity p-1">
+                            <Trash2 size={12} style={{ color: "var(--coral)" }} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {hasPrevMonthSavings && (
+                <button onClick={copyPreviousMonthBalances} className="text-xs underline opacity-60 hover:opacity-100 mb-3">
+                  Copier les soldes du mois précédent
+                </button>
+              )}
+
+              <div className="flex gap-2 mb-2">
+                <input type="text" placeholder="Nom du compte (ex. Livret A)" value={newAccountName}
+                  onChange={(e) => setNewAccountName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addSavingsAccount()} />
+                <button onClick={addSavingsAccount} className="shrink-0 flex items-center gap-1 rounded-lg px-3 text-sm font-medium" style={{ background: "var(--petrol)", color: "#fff" }}>
+                  <Plus size={15} /> Ajouter
+                </button>
+              </div>
+
+              {savingsEvolutionData.length > 1 && (
+                <div style={{ height: 140, marginTop: "12px" }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={savingsEvolutionData} margin={{ top: 4, right: 4, left: -14, bottom: 0 }}>
+                      <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
+                      <XAxis dataKey="label" tick={{ fontSize: 10, fill: "var(--ink)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
+                      <YAxis tick={{ fontSize: 9, fill: "var(--ink)" }} axisLine={false} tickLine={false} width={40} />
+                      <Tooltip formatter={(v) => fmt(v)} contentStyle={{ fontFamily: "IBM Plex Sans", fontSize: 12, borderRadius: 8, border: "1px solid var(--line)" }} />
+                      <Area type="monotone" dataKey="total" name="Épargne totale" stroke="#4F7859" fill="#4F7859" fillOpacity={0.18} strokeWidth={2} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               {[
                 { label: "Taux d'épargne moyen", value: avgSavingsRate === null ? "—" : `${Math.round(avgSavingsRate)}%`, color: "var(--petrol)" },
@@ -1640,12 +1768,11 @@ export default function ExpenseTracker() {
         <p className="text-xs text-center mt-6" style={{ opacity: 0.4 }}>
           Vos données sont enregistrées automatiquement et restent privées, propres à vous.
         </p>
-      </div>
 
       {fullscreenChart && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(22,36,31,0.65)" }}
           onClick={() => setFullscreenChart(null)}>
-          <div className="rounded-xl p-6 w-full" style={{ background: "var(--card)", maxWidth: "900px", maxHeight: "88vh", overflowY: "auto" }}
+          <div className="rounded-xl p-6 w-full" style={{ background: "#FFFFFF", maxWidth: "900px", maxHeight: "88vh", overflowY: "auto" }}
             onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h2 className="fx-display text-xl font-medium">{CHART_TITLES[fullscreenChart]}</h2>
@@ -1774,9 +1901,28 @@ export default function ExpenseTracker() {
                 </ResponsiveContainer>
               </div>
             )}
+
+            {fullscreenChart === "patrimoine" && (
+              <div style={{ height: 450 }}>
+                {savingsEvolutionData.length === 0 ? (
+                  <p className="text-sm py-6 text-center" style={{ opacity: 0.5 }}>Ajoute au moins un compte et un solde pour voir l'évolution.</p>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={savingsEvolutionData} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
+                      <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="3 3" />
+                      <XAxis dataKey="label" tick={{ fontSize: 12, fill: "var(--ink)" }} axisLine={{ stroke: "var(--line)" }} tickLine={false} />
+                      <YAxis tick={{ fontSize: 11, fill: "var(--ink)" }} axisLine={false} tickLine={false} width={55} />
+                      <Tooltip formatter={(v) => fmt(v)} contentStyle={{ fontFamily: "IBM Plex Sans", fontSize: 13, borderRadius: 8, border: "1px solid var(--line)" }} />
+                      <Area type="monotone" dataKey="total" name="Épargne totale" stroke="#4F7859" fill="#4F7859" fillOpacity={0.18} strokeWidth={2.5} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
