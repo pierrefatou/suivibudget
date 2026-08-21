@@ -175,7 +175,18 @@ export default function ExpenseTracker() {
     (async () => {
       try {
         const res = await storage.get("expenses");
-        if (res && res.value) setExpenses(JSON.parse(res.value));
+        if (res && res.value) {
+          const parsed = JSON.parse(res.value);
+          // Corrige rétroactivement les anciennes dépenses de voyage : catégorie
+          // principale -> "voyage" (avec conservation de la catégorie d'origine
+          // pour pouvoir la restaurer si la dépense est un jour retirée du voyage).
+          const migrated = parsed.map((e) => (
+            e.tripId && e.category !== "voyage"
+              ? { ...e, originalCategory: e.category, originalSubcategory: e.subcategory || "", category: "voyage", subcategory: "" }
+              : e
+          ));
+          setExpenses(migrated);
+        }
       } catch (e) {}
       try {
         const res = await storage.get("incomes");
